@@ -14,11 +14,14 @@ class Remover:
     for i in list[self.num:]:
       remove(path+'/'+i)
 
-def arch(cleanpath,list):
+def arch(list):
   arhiv='arhiv'
+  print list
   for i in list:
+    print i
     name,num,files=i.split('$')
-    if files[0]==':': continue
+    print "name=",name,"num=",num,"files=",files
+    #if files[0]==':': continue
     num=int(num)
     rar='rar a -r -m5 -agYYYY.MM.DD '+arhiv+'/'+name+'/'+name+' '+files
     system(rar)
@@ -28,4 +31,4 @@ def arch(cleanpath,list):
   through_dirs(arhiv, del_old)
 
 if __name__=='__main__':
-  arch(sys.argv[1],sys.argv[2:])
+  arch(sys.argv[1:])
