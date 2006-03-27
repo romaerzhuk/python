@@ -16,11 +16,11 @@ class Remover:
 
 def arch(list):
   arhiv='arhiv'
-  print list
+  #print list
   for i in list:
-    print i
+    #print i
     name,num,files=i.split('$')
-    print "name=",name,"num=",num,"files=",files
+    #print "name=",name,"num=",num,"files=",files
     #if files[0]==':': continue
     num=int(num)
     rar='rar a -r -m5 -agYYYY.MM.DD '+arhiv+'/'+name+'/'+name+' '+files
