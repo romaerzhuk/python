@@ -7,7 +7,7 @@ def clean(path):
     print "work directory is", work
     print '"%1s" is not work directory ' % (path)
   else:
-    dir.through_files(path, os.remove, FileFilter.Filter(work+'/cleaned'))
+    dir.through_files(path, os.remove, FileFilter.Filter(work+'/дом/cleaned'))
 
 if __name__=='__main__':
   clean(sys.argv[1])
