@@ -27,7 +27,7 @@ def arch(list):
     system(rar)
     del_old=Remover(num)
     through_dirs(arhiv+'/'+name, del_old)
-  del_old=Remover(30)
+  del_old=Remover(3)
   through_dirs(arhiv, del_old)
 
 if __name__=='__main__':
