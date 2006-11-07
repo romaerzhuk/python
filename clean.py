@@ -1,3 +1,4 @@
+# -*- coding: cp1251 -*-
 import sys, os, string, FileFilter, dir
 
 def clean(path):

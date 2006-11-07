@@ -1,4 +1,5 @@
-import xreadlines, os, string,sys, codecs, StringIO
+# -*- coding: cp1251 -*-
+import os, string,sys, codecs, StringIO
 
 """
 Читает ввод и выполняет системную команду с параметром-строкой

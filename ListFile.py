@@ -1,5 +1,6 @@
+# -*- coding: cp1251 -*-
 """
-Читает содержимое файла и превращает его в список
+╫шЄрхЄ ёюфхЁцшьюх Їрщыр ш яЁхтЁр∙рхЄ хую т ёяшёюъ
 """
 class List:
    def __init__(self,file):
@@ -8,7 +9,7 @@ class List:
      return ListIter(self.file)
 
 """
-Итератор файла
+╚ЄхЁрЄюЁ Їрщыр
 """
 class ListIter:
   def __init__(self,filename):

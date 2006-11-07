@@ -1,11 +1,11 @@
-import os, dospath, sys
+import os, sys
 
 def through_files(path,proc=None,fileFilter=None):
   if path=='.': prefix=''
   else: prefix=path+'/'
   for i in os.listdir(path):
     s=prefix+i
-    if dospath.isdir(s):
+    if os.path.isdir(s):
       through_files(s,proc,fileFilter)
     else:
       if fileFilter==None or fileFilter(s):
@@ -24,7 +24,7 @@ def through_dirs(path,proc=None,fileFilter=None):
       proc(path)
   for i in os.listdir(path):
     s=prefix+i
-    if dospath.isdir(s):
+    if os.path.isdir(s):
       through_dirs(s,proc,fileFilter)
 
 if __name__=='__main__':
