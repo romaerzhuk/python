@@ -23,7 +23,7 @@ def arch(list):
     #print "name=",name,"num=",num,"files=",files
     #if files[0]==':': continue
     num=int(num)
-    rar='rar a -r -m5 -agYYYY.MM.DD '+arhiv+'/'+name+'/'+name+' '+files
+    rar='rar a -r -m5 -agYYYY-MM-DD '+arhiv+'/'+name+'/'+name+' '+files
     system(rar)
     del_old=Remover(num)
     through_dirs(arhiv+'/'+name, del_old)
