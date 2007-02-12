@@ -20,6 +20,6 @@ if __name__=='__main__':
   for file in logList:
       for line in ListFile.List(file):
         m=reVal.search(line)
-        if m != None:
+        if m != None and m.group(2) > 15:
           print m.group(1), m.group(2), m.group(3), m.group(4)
 

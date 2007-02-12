@@ -8,7 +8,7 @@ class Remover:
   def __init__(self,num):
     self.num=num
   def __call__(self,path):
-    r=re.compile(r'\d\d\.\d\d\.\d\d')
+    r=re.compile(r'\d\d\d\d-\d\d-\d\d')
     list=filter(lambda i: r.search(i)!=None, listdir(path))
     list.sort(lambda x, y: ((r.search(y).group(0)>=r.search(x).group(0))<<1)-1)
     for i in list[self.num:]:
