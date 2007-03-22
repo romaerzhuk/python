@@ -16,9 +16,9 @@ class Remover:
       remove(path+'/'+i)
 
 def backup(dir,command,list):
-  #print list
+  #print dir,command,list
   del_old=Remover(3)
-  through_dirs(arhiv, del_old)
+  through_dirs(dir, del_old)
   for i in list:
     name,files,num=i.split('$')
     #print "name='%1s'\nfiles='%2s'\nnum='%3s'" % (name,files,num)
@@ -26,8 +26,8 @@ def backup(dir,command,list):
     num=int(num)
     print command % (dir+'/'+name+'/'+name+time.strftime("%Y-%m-%d"), files)
     system(command % (dir+'/'+name+'/'+name+time.strftime("%Y-%m-%d"), files))
-    through_dirs(arhiv+'/'+name, Remover(num))
-  through_dirs(arhiv, del_old)
+    through_dirs(dir+'/'+name, Remover(num))
+  through_dirs(dir, del_old)
 
 if __name__=='__main__':
   # use: backup.py dir-name command list
