@@ -1,9 +1,9 @@
-# -*- coding: cp1251 -*-
+# -*- coding: utf8 -*-
 import re, types, ListFile
 
 class Filter:
   """
-  Из списка масок файлов формирует регулярное выражение
+  РР· СЃРїРёСЃРєР° РјР°СЃРѕРє С„Р°Р№Р»РѕРІ С„РѕСЂРјРёСЂСѓРµС‚ СЂРµРіСѓР»СЏСЂРЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ
   """
   def __init__(self, list):
     if type(list) is types.StringType:

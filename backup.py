@@ -1,36 +1,93 @@
-from clean import clean
-from os import system, listdir, remove
-from dir import through_dirs
-import re
-import sys
-import time
+#!/usr/bin/python
+# -*- coding: utf8 -*-
 
+import sys, os, re, time, md5, socket, tarfile
+
+# Удаляет из директории устаревшие файлы. Оставляет последние num-файлов
 class Remover:
-  def __init__(self,num):
-    self.num=num
+  def __init__(self, num):
+    self.num = num * 2 # должны быть ещё файлы с контрольными суммами
   def __call__(self,path):
     r=re.compile(r'\d\d\d\d-\d\d-\d\d')
-    list=filter(lambda i: r.search(i)!=None, listdir(path))
+    list=filter(lambda i: r.search(i)!=None, os.listdir(path))
     list.sort(lambda x, y: ((r.search(y).group(0)>=r.search(x).group(0))<<1)-1)
+    #print list[self.num:]
     for i in list[self.num:]:
-      remove(path+'/'+i)
+      os.remove(path+'/'+i)
 
-def backup(dir,command,list):
-  #print dir,command,list
-  del_old=Remover(3)
-  through_dirs(dir, del_old)
-  for i in list:
-    name,files,num=i.split('$')
-    #print "name='%1s'\nfiles='%2s'\nnum='%3s'" % (name,files,num)
-    #if files[0]==':': continue
-    num=int(num)
-    print command % (dir+'/'+name+'/'+name+time.strftime("%Y-%m-%d"), files)
-    system(command % (dir+'/'+name+'/'+name+time.strftime("%Y-%m-%d"), files))
-    through_dirs(dir+'/'+name, Remover(num))
-  through_dirs(dir, del_old)
+# Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
+def through_dirs(path, proc=None, fileFilter=None):
+  if path=='.': prefix=''
+  else: prefix=path+'/'
+  if fileFilter==None or fileFilter(path):
+    if proc==None:
+      print path
+    else:
+      proc(path)
+  for i in os.listdir(path):
+    s=prefix+i
+    if os.path.isdir(s):
+      through_dirs(s,proc,fileFilter)
+
+# Рекурсивно сканирует директорию. Вызывает для каждого файла процедуру
+def through_files(path,proc=None,fileFilter=None):
+  if path=='.': prefix=''
+  else: prefix=path+'/'
+  for i in os.listdir(path):
+    s=prefix+i
+    if os.path.isdir(s):
+      through_files(s,proc,fileFilter)
+    else:
+      if fileFilter==None or fileFilter(s):
+        if proc==None:
+          print s
+        else:
+          proc(s)
+
+# Вычисляет контрольную сумму файла. Результат пишет в файл.md5
+def md5sum(file):
+  sum = md5.new()
+  fd  = open(file, "rb")
+  while 1:
+    buf = fd.read(8192)
+    if len(buf) == 0:
+      break
+    sum.update(buf)
+  fd.close()
+  fd = open(file + ".md5", "w")
+  fd.write("%s\t*%s\n" % (sum.hexdigest(), os.path.basename(file)))
+
+# Создаёт резервную копию файла
+def backup(dest, src, remove):
+  #print dest, src 
+  through_dirs(dest, remove)
+  host = socket.gethostname()
+  date = time.strftime("%Y-%m-%d")
+  os.chdir(os.path.dirname(src))
+  src = os.path.basename(src)
+  name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+".tar.gz"
+  tar = tarfile.open(name, "w:gz")
+  through_files(src, lambda f: tar.add(f))
+  tar.close()
+  md5sum(name)
+  through_dirs(dest, remove)
+
+# Проверяет корректность файлов svn-репозиториев
+def svnVerify(dir):
+  for rep in os.listdir(dir):
+    if os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
+      raise "Invalid subversion repository " + rep 
+
+def main(destDirs, srcDirs, num):
+  remove = Remover(num)
+  for src in srcDirs:
+    if 'svn' == os.path.basename(src):
+      svnVerify(src)
+    for dest in destDirs:
+      backup(dest, src, remove)
 
 if __name__=='__main__':
-  # use: backup.py dir-name command list
-  # command example: 'tar xvzf %1.tgz %2'
-  # list example: 'file-nam$files-filter$number'
-  backup(sys.argv[1], sys.argv[2], sys.argv[3:])
+  if len(sys.argv) <= 3:
+    print "Usage: backup.py destDirs srcDirs numberOfFiles" 
+  else:
+    main(sys.argv[1].split(","), sys.argv[2].split(","), int(sys.argv[3]))

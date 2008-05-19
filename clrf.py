@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import sys, re, os
 
 """Replace CRLF with LF in argument files."""
