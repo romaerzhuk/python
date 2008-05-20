@@ -29,21 +29,6 @@ def through_dirs(path, proc=None, fileFilter=None):
     if os.path.isdir(s):
       through_dirs(s,proc,fileFilter)
 
-# Рекурсивно сканирует директорию. Вызывает для каждого файла процедуру
-def through_files(path,proc=None,fileFilter=None):
-  if path=='.': prefix=''
-  else: prefix=path+'/'
-  for i in os.listdir(path):
-    s=prefix+i
-    if os.path.isdir(s):
-      through_files(s,proc,fileFilter)
-    else:
-      if fileFilter==None or fileFilter(s):
-        if proc==None:
-          print s
-        else:
-          proc(s)
-
 # Вычисляет контрольную сумму файла. Результат пишет в файл.md5
 def md5sum(file):
   sum = md5.new()
@@ -67,7 +52,7 @@ def backup(dest, src, remove):
   src = os.path.basename(src)
   name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+".tar.gz"
   tar = tarfile.open(name, "w:gz")
-  through_files(src, lambda f: tar.add(f))
+  tar.add(src)
   tar.close()
   md5sum(name)
   through_dirs(dest, remove)
