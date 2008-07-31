@@ -43,17 +43,18 @@ def md5sum(file):
   fd.write("%s\t*%s\n" % (sum.hexdigest(), os.path.basename(file)))
 
 # Создаёт резервную копию файла
-def backup(dest, src, remove, compress):
+def backup(dest, src, remove, command, suffix):
   #print dest, src 
   through_dirs(dest, remove)
   host = socket.gethostname()
   date = time.strftime("%Y-%m-%d")
+  #print "dir =", os.path.dirname(src)
   os.chdir(os.path.dirname(src))
   src = os.path.basename(src)
-  name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+".tar."+compress
-  tar = tarfile.open(name, "w:"+compress)
-  tar.add(src)
-  tar.close()
+  name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+"."+suffix
+  command = command % (name, src)
+  #print "command =", command
+  os.system(command)
   md5sum(name)
   through_dirs(dest, remove)
 
@@ -63,16 +64,17 @@ def svnVerify(dir):
     if os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
       raise "Invalid subversion repository " + rep 
 
-def main(destDirs, srcDirs, num, compress):
+def main(destDirs, srcDirs, command, suffix, num):
   remove = Remover(num)
   for src in srcDirs:
     if 'svn' == os.path.basename(src):
       svnVerify(src)
     for dest in destDirs:
-      backup(dest, src, remove, compress)
+      backup(dest, src, remove, command, suffix)
 
 if __name__=='__main__':
   if len(sys.argv) <= 4:
-    print "Usage: backup.py destDirs srcDirs numberOfFiles (gz|bz2)" 
+    print "Usage: backup.py destDirs srcDirs archivingCommand fileSuffix numberOfFiles" 
+    print "Example: backup.py /var/backup $HOME/src 'tar czf %1s %2s' tar.gz 3" 
   else:
-    main(sys.argv[1].split(","), sys.argv[2].split(","), int(sys.argv[3]), sys.argv[4])
+    main(sys.argv[1].split(","), sys.argv[2].split(","), sys.argv[3], sys.argv[4], int(sys.argv[5]))
