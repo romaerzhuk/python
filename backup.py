@@ -64,11 +64,23 @@ def svnVerify(dir):
     if os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
       raise "Invalid subversion repository " + rep 
 
+# Проверяет корректность файлов bzr-репозиториев
+def bzrVerify(dir):
+  if ".bzr" != os.path.basename(dir):
+    return 1
+  dir = os.path.dirname(dir)
+  os.system("bzr update %1s" % dir)
+  if os.system("bzr check %1s" % dir) != 0:
+    raise "Invalid bazaar repository " + dir
+  return 0
+
 def main(destDirs, srcDirs, command, suffix, num):
   remove = Remover(num)
   for src in srcDirs:
-    if 'svn' == os.path.basename(src):
+    if "svn" == os.path.basename(src):
       svnVerify(src)
+    if "bzr" == os.path.basename(src):
+      through_dirs(src, lambda x: None, bzrVerify)
     for dest in destDirs:
       backup(dest, src, remove, command, suffix)
 
