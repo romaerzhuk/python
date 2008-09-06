@@ -44,19 +44,22 @@ def md5sum(file):
 
 # Создаёт резервную копию файла
 def backup(dest, src, remove, command, suffix):
-  #print dest, src 
-  through_dirs(dest, remove)
-  host = socket.gethostname()
-  date = time.strftime("%Y-%m-%d")
-  #print "dir =", os.path.dirname(src)
-  os.chdir(os.path.dirname(src))
-  src = os.path.basename(src)
-  name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+"."+suffix
-  command = command % (name, src)
-  #print "command =", command
-  os.system(command)
-  md5sum(name)
-  through_dirs(dest, remove)
+  try:
+    #print dest, src 
+    through_dirs(dest, remove)
+    host = socket.gethostname()
+    date = time.strftime("%Y-%m-%d")
+    #print "dir =", os.path.dirname(src)
+    os.chdir(os.path.dirname(src))
+    src = os.path.basename(src)
+    name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+"."+suffix
+    command = command % (name, src)
+    #print "command =", command
+    os.system(command)
+    md5sum(name)
+    through_dirs(dest, remove)
+  except Exception, e:
+    print e
 
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
