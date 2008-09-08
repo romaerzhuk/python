@@ -43,16 +43,16 @@ def md5sum(file):
   fd.write("%s\t*%s\n" % (sum.hexdigest(), os.path.basename(file)))
 
 # Создаёт резервную копию файла
-def backup(dest, src, remove, command, suffix):
+def backup(dest, src, remove, command, suffix, root):
   try:
     #print dest, src 
     through_dirs(dest, remove)
-    host = socket.gethostname()
     date = time.strftime("%Y-%m-%d")
+    host = socket.gethostname()
     #print "dir =", os.path.dirname(src)
     os.chdir(os.path.dirname(src))
     src = os.path.basename(src)
-    name = dest+"/"+host+"/"+host+"-"+src+"/"+host+"-"+src+date+"."+suffix
+    name = dest+"/"+root+"/"+host+"-"+src+"/"+host+"-"+src+date+"."+suffix
     command = command % (name, src)
     #print "command =", command
     os.system(command)
@@ -77,7 +77,7 @@ def bzrVerify(dir):
     raise "Invalid bazaar repository " + dir
   return 0
 
-def main(destDirs, srcDirs, command, suffix, num):
+def main(destDirs, srcDirs, command, suffix, num, host):
   remove = Remover(num)
   for src in srcDirs:
     if "svn" == os.path.basename(src):
@@ -85,11 +85,15 @@ def main(destDirs, srcDirs, command, suffix, num):
     if "bzr" == os.path.basename(src):
       through_dirs(src, lambda x: None, bzrVerify)
     for dest in destDirs:
-      backup(dest, src, remove, command, suffix)
+      backup(dest, src, remove, command, suffix, host)
 
 if __name__=='__main__':
   if len(sys.argv) <= 4:
-    print "Usage: backup.py destDirs srcDirs archivingCommand fileSuffix numberOfFiles" 
+    print "Usage: backup.py destDirs srcDirs archivingCommand fileSuffix numberOfFiles [rootDir]" 
     print "Example: backup.py /var/backup $HOME/src 'tar czf %1s %2s' tar.gz 3" 
   else:
-    main(sys.argv[1].split(","), sys.argv[2].split(","), sys.argv[3], sys.argv[4], int(sys.argv[5]))
+    if len(sys.argv) >= 5:
+      root = sys.argv[6]
+    else:
+      root = socket.gethostname()
+    main(sys.argv[1].split(","), sys.argv[2].split(","), sys.argv[3], sys.argv[4], int(sys.argv[5]), root)
