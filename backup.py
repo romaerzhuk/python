@@ -39,7 +39,7 @@ def md5sum(file):
       break
     sum.update(buf)
   fd.close()
-  fd = open(file + ".md5", "w")
+  fd = open(file + ".md5", "wb")
   fd.write("%s\t*%s\n" % (sum.hexdigest(), os.path.basename(file)))
 
 # Создаёт резервную копию файла
@@ -88,11 +88,11 @@ def main(destDirs, srcDirs, command, suffix, num, host):
       backup(dest, src, remove, command, suffix, host)
 
 if __name__=='__main__':
-  if len(sys.argv) <= 4:
+  if len(sys.argv) < 6:
     print "Usage: backup.py destDirs srcDirs archivingCommand fileSuffix numberOfFiles [rootDir]" 
     print "Example: backup.py /var/backup $HOME/src 'tar czf %1s %2s' tar.gz 3" 
   else:
-    if len(sys.argv) >= 5:
+    if len(sys.argv) >= 7:
       root = sys.argv[6]
     else:
       root = socket.gethostname()
