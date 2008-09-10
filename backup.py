@@ -148,7 +148,7 @@ def main(destDirs, srcDirs, command, suffix, num, host):
     if "bzr" == os.path.basename(src):
       through_dirs(src, lambda x: None, bzrVerify)
     for dest in destDirs:
-      backup(destDir, src, remove, command, suffix, host)
+      backup(dest, src, remove, command, suffix, host)
   MirrorRecovery(destDirs)
     
 if __name__ == '__main__':
