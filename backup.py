@@ -3,18 +3,6 @@
 
 import sys, os, re, time, md5, socket, tarfile, shutil
 
-# Удаляет из директории устаревшие файлы. Оставляет последние num-файлов
-class Remover:
-  def __init__(self, num):
-    self.num = num * 2 # должны быть ещё файлы с контрольными суммами
-  def __call__(self, path):
-    r = re.compile(r'\d\d\d\d-\d\d-\d\d')
-    list = filter(lambda i: r.search(i) != None, os.listdir(path))
-    list.sort(lambda x, y: ((r.search(y).group(0) >= r.search(x).group(0)) << 1) - 1)
-    #print list[self.num:]
-    for i in list[self.num:]:
-      os.remove(path + '/' + i)
-
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, proc=None, fileFilter=None):
   if path == '.': prefix = ''
@@ -55,31 +43,10 @@ def mkdirs(path):
   mkdirs(os.path.dirname(path))
   os.mkdir(path)
   
-# Создаёт резервную копию файла
-def backup(dest, src, remove, command, suffix, root):
-  try:
-    #print dest, src
-    through_dirs(dest, remove)
-    date = time.strftime("%Y-%m-%d")
-    host = socket.gethostname()
-    #print "dir =", os.path.dirname(src)
-    os.chdir(os.path.dirname(src))
-    src = os.path.basename(src)
-    name = dest + '/' + root + '/' + host + '-' + src
-    mkdirs(name)
-    name += '/' + host + '-' + src + date + '.' + suffix
-    command = command % (name, src)
-    #print "command =", command
-    os.system(command)
-    md5sumCreate(name)
-    through_dirs(dest, remove)
-  except Exception, e:
-    print e
-
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
   for rep in os.listdir(dir):
-    if os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
+    if os.path.isdir(dir + '/' + rep) and os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
       raise "Invalid subversion repository " + rep 
 
 # Проверяет корректность файлов bzr-репозиториев
@@ -92,44 +59,116 @@ def bzrVerify(dir):
     raise "Invalid bazaar repository " + dir
   return False
 
+# Создаёт резервные копии файла
 # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
-class MirrorRecovery:
-  def __init__(self, destDirs):
-    self.pattren = re.compile(r"^(\S+)\s+\*(.+)$")
+class Backup:
+  def __init__(self, destDirs, srcDirs, command, suffix, num, rootDir):
+    self.md5Pattern = re.compile(r"^(\S+)\s+\*(.+)$")
+    self.removePattern = re.compile(r'\d\d\d\d-\d\d-\d\d')
     self.set = set()
     self.destDirs = destDirs
+    self.command = command
+    self.suffix = suffix
+    self.num = num * 2 # должны быть ещё файлы с контрольными суммами
+    self.rootDir = rootDir
+
+    for dir in destDirs:
+      self.clear(dir)
+    for src in srcDirs:
+      if "svn" == os.path.basename(src):
+        svnVerify(src)
+      if "bzr" == os.path.basename(src):
+        through_dirs(src, lambda x: None, bzrVerify)
+      self.backup(destDirs[0], src)
     for self.dir in destDirs:
-      self.files("")
-  def files(self, key):
+      self.recoveryDir("")
+  # Удаляет из директорий устаревшие файлы
+  def clear(self, dir):
+    try:
+      through_dirs(dir, self)
+    except Exception, e:
+      print "clear error:", e
+  # Удаляет из директории устаревшие файлы. Оставляет последние num-файлов
+  def __call__(self, path):
+    r = self.removePattern
+    list = filter(lambda i: r.search(i) != None, os.listdir(path))
+    list.sort(lambda x, y: ((r.search(y).group(0) >= r.search(x).group(0)) << 1) - 1)
+    #print list[self.num:]
+    for i in list[self.num:]:
+      os.remove(path + '/' + i)
+  # Создаёт резервные копии файла
+  def backup(self, dir, src):
+      try:
+        #print dir, src
+        date = time.strftime("%Y-%m-%d")
+        host = socket.gethostname()
+        self.dir = dir
+        #print "src.dir =", os.path.dirname(src)
+        os.chdir(os.path.dirname(src))
+        src = os.path.basename(src)
+        dir = '/' + self.rootDir + '/' + host + '-' + src
+        mkdirs(self.path(dir))
+        key = dir + '/' + host + '-' + src + date + '.' + self.suffix
+        path = self.path(key)
+        command = self.command % (os.path.normpath(path), src)
+        if os.path.exists(path):
+          os.remove(path)
+        self.set.add(key)
+        #print "command =", command
+        os.system(command)
+        md5sumCreate(path)
+        self.clear(self.path(dir))
+        
+        #print "copy backup dirs..."
+        destDirs = set(self.destDirs)
+        destDirs.remove(self.dir)
+        #print "for self.dif in", destDirs 
+        for self.dir in destDirs:
+          #print "copy backup", self.dir
+          self.copy(path, self.path(key))
+          self.clear(self.path(dir))
+      except Exception, e:
+        print "backup error:", e
+  # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий 
+  def recoveryDir(self, key):
     path = self.path(key)
-    for i in os.listdir(path):
-      k = key + '/' + i
+    if not os.path.isdir(path):
+      return
+    for name in os.listdir(path):
+      k = key + '/' + name
       path = self.path(k)
       if os.path.isdir(path):
-        self.files(k)
+        self.recoveryDir(k)
       else:
         if not k.endswith(".md5") and not (k in self.set):
           self.set.add(k)
-          src = None
-          destSet = set()
-          for dir in self.destDirs:
-            dst = dir + k
-            if self.correct(i, dst):
-              if src == None:
-                src = dst
-            else:
-              destSet.add(dst)
-          if src == None:
-            print "corrupted error:", k
-          else:
-            for dst in destSet: 
-              try:
-                print "recover %1s from %2s" % (dst, src)
-                mkdirs(os.path.dirname(dst))
-                shutil.copy(path, dst)
-                shutil.copy(self.md5(path), self.md5(dst))
-              except Exception, e:
-                print "recover error:", e
+          self.recoveryFile(name, k)
+  # Восстанавливает повреждённй или отсутствующий файл из зеркальных копий 
+  def recoveryFile(self, name, key):        
+    src = None
+    dstSet = set()
+    for dir in self.destDirs:
+      dst = dir + key
+      if not self.correct(name, dst):
+        dstSet.add(dst)
+      elif src == None:
+        src = dst
+    if src == None:
+      print "corrupted error:", key
+    else:
+      for dst in dstSet: 
+        print "recover %1s from %2s" % (dst, src)
+        self.copy(src, dst)
+  # Копирует файл с контрольой суммой
+  def copy(self, src, dst):
+    try:
+      #print "copy", src, dst
+      mkdirs(os.path.dirname(dst))
+      shutil.copy(src, dst)
+      shutil.copy(self.md5(src), self.md5(dst))
+    except Exception, e:
+      print "copy error:", e
+  # Проверяет контрольую сумму файла
   def correct(self, name, path):
     try:
       md5 = self.md5(path)
@@ -137,7 +176,7 @@ class MirrorRecovery:
         return False
       line = file(md5).readline()
       #print self.dir, ',', k, " line =", line
-      m = self.pattren.match(line)
+      m = self.md5Pattern.match(line)
       if m == None:
         return False
       real = md5sum(path).hexdigest()
@@ -146,23 +185,13 @@ class MirrorRecovery:
     except Exception, e:
       print "md5sum check error:", e
       return False
+  # Возвращает полный путь файла
   def path(self, key):
     return self.dir + key
+  # Возвращает имя файла с контрольной суммой
   def md5(self, path):
     return path + ".md5"
               
-            
-def main(destDirs, srcDirs, command, suffix, num, host):
-  remove = Remover(num)
-  for src in srcDirs:
-    if "svn" == os.path.basename(src):
-      svnVerify(src)
-    if "bzr" == os.path.basename(src):
-      through_dirs(src, lambda x: None, bzrVerify)
-    for dest in destDirs:
-      backup(dest, src, remove, command, suffix, host)
-  MirrorRecovery(destDirs)
-    
 if __name__ == '__main__':
   if len(sys.argv) < 6:
     print "Usage: backup.py destDirs srcDirs archivingCommand fileSuffix numberOfFiles [rootDir]" 
@@ -172,4 +201,4 @@ if __name__ == '__main__':
       root = sys.argv[6]
     else:
       root = socket.gethostname()
-    main(sys.argv[1].split(","), sys.argv[2].split(","), sys.argv[3], sys.argv[4], int(sys.argv[5]), root)
+    Backup(sys.argv[1].split(","), sys.argv[2].split(","), sys.argv[3], sys.argv[4], int(sys.argv[5]), root)
