@@ -120,13 +120,16 @@ class MirrorRecovery:
             else:
               destSet.add(dst)
           if src == None:
-            print "error: corrupted %1s" % k
+            print "corrupted error:", k
           else:
             for dst in destSet: 
-              print "recover %1s from %2s" % (dst, src)
-              mkdirs(os.path.dirname(dst))
-              shutil.copy(path, dst)
-              shutil.copy(self.md5(path), self.md5(dst))
+              try:
+                print "recover %1s from %2s" % (dst, src)
+                mkdirs(os.path.dirname(dst))
+                shutil.copy(path, dst)
+                shutil.copy(self.md5(path), self.md5(dst))
+              except Exception, e:
+                print "recover error:", e
   def correct(self, name, path):
     try:
       md5 = self.md5(path)
