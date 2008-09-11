@@ -97,7 +97,7 @@ class MirrorRecovery:
   def __init__(self, destDirs):
     self.pattren = re.compile(r"^(\S+)\s+\*(.+)$")
     self.set = set()
-    self.destDirs = set(destDirs)
+    self.destDirs = destDirs
     for self.dir in destDirs:
       self.files("")
   def files(self, key):
@@ -108,13 +108,22 @@ class MirrorRecovery:
       if os.path.isdir(path):
         self.files(k)
       else:
-        if not k.endswith(".md5") and not (k in self.set) and self.correct(i, path):
+        if not k.endswith(".md5") and not (k in self.set):
           self.set.add(k)
-          #print "self.destDirs - self.dir =", (self.destDirs - set([self.dir]))
-          for dir in (self.destDirs - set([self.dir])):
+          src = None
+          destSet = set()
+          for dir in self.destDirs:
             dst = dir + k
-            if not self.correct(i, dst):
-              print "recover %1s from %2s" % (dst, self.dir)
+            if self.correct(i, dst):
+              if src == None:
+                src = dst
+            else:
+              destSet.add(dst)
+          if src == None:
+            print "error: corrupted %1s" % k
+          else:
+            for dst in destSet: 
+              print "recover %1s from %2s" % (dst, src)
               mkdirs(os.path.dirname(dst))
               shutil.copy(path, dst)
               shutil.copy(self.md5(path), self.md5(dst))
