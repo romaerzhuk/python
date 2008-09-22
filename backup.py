@@ -82,6 +82,8 @@ class Backup:
       self.backup(destDirs[0], src)
     for self.dir in destDirs:
       self.recoveryDir("")
+    for dir in destDirs:
+      self.clear(dir)
   # Удаляет из директорий устаревшие файлы
   def clear(self, dir):
     try:
