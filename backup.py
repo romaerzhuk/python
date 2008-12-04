@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 
-import sys, os, re, time, md5, socket, tarfile, shutil
+import sys, os, re, time, hashlib, socket, tarfile, shutil
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, proc=None, fileFilter=None):
@@ -24,7 +24,7 @@ def md5sumCreate(file):
 
 # Вычисляет контрольную сумму файла
 def md5sum(file):
-  sum = md5.new()
+  sum = hashlib.md5()
   fd = open(file, "rb")
   while True:
     buf = fd.read(1024 * 1024)
@@ -53,10 +53,10 @@ def svnVerify(dir):
 def bzrVerify(dir):
   if ".bzr" != os.path.basename(dir):
     return True
-  dir = os.path.dirname(dir)
-  os.system("bzr update %1s" % dir)
-  if os.system("bzr check %1s" % dir) != 0:
-    raise "Invalid bazaar repository " + dir
+  #dir = os.path.dirname(dir)
+  #os.system("bzr update %1s" % dir)
+  #if os.system("bzr check %1s" % dir) != 0:
+  #  raise IOError("Invalid bazaar repository " + dir)
   return False
 
 # Создаёт резервные копии файла
@@ -75,11 +75,12 @@ class Backup:
     for dir in destDirs:
       self.clear(dir)
     for src in srcDirs:
-      if "svn" == os.path.basename(src):
-        svnVerify(src)
-      if "bzr" == os.path.basename(src):
-        through_dirs(src, lambda x: None, bzrVerify)
-      self.backup(destDirs[0], src)
+      if "" != src:
+        if "svn" == os.path.basename(src):
+          svnVerify(src)
+        if "bzr" == os.path.basename(src):
+          through_dirs(src, lambda x: None, bzrVerify)
+        self.backup(destDirs[0], src)
     for self.dir in destDirs:
       self.recoveryDir("")
     for dir in destDirs:
