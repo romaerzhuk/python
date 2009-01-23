@@ -47,7 +47,7 @@ def mkdirs(path):
 def svnVerify(dir):
   for rep in os.listdir(dir):
     if os.path.isdir(dir + '/' + rep) and os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
-      raise "Invalid subversion repository " + rep 
+      raise IOError("Invalid subversion repository " + rep)
 
 # Проверяет корректность файлов bzr-репозиториев
 def bzrVerify(dir):
