@@ -57,10 +57,12 @@ def bzrVerify(dir):
   if os.path.isdir(dir + "/checkout"):
     os.system("bzr update %1s" % bzr)
   if os.path.isdir(dir + "/repository"): 
-    if os.system("bzr check %1s" % bzr) != 0:
-      raise IOError("Invalid bazaar repository %1s" % bzr)
-    if os.system("bzr pack %1s" % bzr) != 0:
-      raise IOError("Bazaar pack error %1s" % bzr)
+    res = os.system("bzr check %1s" % bzr)
+    if res != 0:
+      raise IOError("Invalid bazaar repository %1s, result=%2s" % (bzr, res))
+    res = os.system("bzr pack %1s" % bzr)
+    if res != 0:
+      raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
   return False
 
 # Создаёт резервные копии файла
