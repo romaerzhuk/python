@@ -53,10 +53,10 @@ def svnVerify(dir):
 def bzrVerify(dir):
   if ".bzr" != os.path.basename(dir):
     return True
-  #dir = os.path.dirname(dir)
-  #os.system("bzr update %1s" % dir)
-  #if os.system("bzr check %1s" % dir) != 0:
-  #  raise IOError("Invalid bazaar repository " + dir)
+  dir = os.path.dirname(dir)
+  os.system("bzr update %1s" % dir)
+  if os.system("bzr check %1s" % dir) != 0:
+    raise IOError("Invalid bazaar repository " + dir)
   return False
 
 # Создаёт резервные копии файла
