@@ -51,7 +51,7 @@ def svnVerify(dir):
 
 # Проверяет корректность файлов bzr-репозиториев
 def bzrVerify(dir):
-  if ".bzr" != os.path.basename(dir):
+  if ".bzr" != os.path.basename(dir) or not os.path.isdir(".bzr/repository"):
     return True
   dir = os.path.dirname(dir)
   os.system("bzr update %1s" % dir)
