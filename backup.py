@@ -51,12 +51,17 @@ def svnVerify(dir):
 
 # Проверяет корректность файлов bzr-репозиториев
 def bzrVerify(dir):
-  if ".bzr" != os.path.basename(dir) or not os.path.isdir(".bzr/repository"):
+  if ".bzr" != os.path.basename(dir) or not os.path.isdir(dir + "/repository"):
     return True
   dir = os.path.dirname(dir)
   os.system("bzr update %1s" % dir)
   if os.system("bzr check %1s" % dir) != 0:
-    raise IOError("Invalid bazaar repository " + dir)
+    raise IOError("Invalid bazaar repository %1s" % dir)
+  if os.system("bzr pack %1s" % dir) != 0:
+    raise IOError("Bazaar pack error %1s" % dir)
+  obsolete = dir + "/repository/obsolete_packs"
+  if os.path.isdir(obsolete):
+    os.removedirs(obsolete) 
   return False
 
 # Создаёт резервные копии файла
