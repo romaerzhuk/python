@@ -63,6 +63,9 @@ def bzrVerify(dir):
     res = os.system("bzr pack %1s" % bzr)
     if res != 0:
       raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
+    dir += "/repository/obsolete_packs"
+    for file in os.listdir(dir):
+      os.remove(dir + '/' + file)
   return False
 
 # Создаёт резервные копии файла
