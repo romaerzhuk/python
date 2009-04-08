@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 
-import sys, os, re, time, hashlib, socket, tarfile, shutil
+import sys, os, re, time, hashlib, socket, tarfile, shutil, platform
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, proc=None, fileFilter=None):
@@ -73,11 +73,12 @@ def bzrVerify(dir):
       print "cd", bzr
       os.system("bzr pull")
   if os.path.isdir(dir + "/repository"): 
+    notWin = platform.system() != "Windows"
     res = os.system("bzr check %1s" % bzr)
-    if res != 0:
+    if res != 0 and notWin:
       raise IOError("Invalid bazaar repository %1s, result=%2s" % (bzr, res))
     res = os.system("bzr pack %1s" % bzr)
-    if res != 0:
+    if res != 0 and notWin:
       raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
     dir += "/repository/obsolete_packs"
     for file in os.listdir(dir):
