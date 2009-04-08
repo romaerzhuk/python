@@ -54,8 +54,20 @@ def bzrVerify(dir):
   if ".bzr" != os.path.basename(dir):
     return True
   bzr = os.path.dirname(dir)
-  if os.path.isdir(dir + "/checkout"):
-    os.system("bzr update %1s" % bzr)
+  conf = dir + "/branch/branch.conf"
+  if os.path.isfile(conf):
+    f = open(conf)
+    try:
+      r = re.compile(r"^parent_location\s=")
+      parent = False
+      for line in f:
+        if r.match(line): parent = True
+    finally:
+      f.close()
+    if parent:
+      os.chdir(bzr)
+      print "cd", bzr
+      os.system("bzr pull")
   if os.path.isdir(dir + "/repository"): 
     res = os.system("bzr check %1s" % bzr)
     if res != 0:
