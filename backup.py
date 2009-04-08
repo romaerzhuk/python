@@ -58,13 +58,17 @@ def bzrVerify(dir):
   if os.path.isfile(conf):
     f = open(conf)
     try:
-      r = re.compile(r"^parent_location\s=")
-      parent = False
+      reParent = re.compile(r"^parent_location\s*=")
+      reBound = re.compile(r"^bound\s*=\s*True")
+      parent = bound = False
       for line in f:
-        if r.match(line): parent = True
+        if reParent.match(line): parent = True
+        elif reBound.match(line): bound = True
     finally:
       f.close()
-    if parent:
+    if bound and os.path.isdir(dir + "/checkout"):
+      os.system("bzr update %1s" % bzr)
+    elif parent:
       os.chdir(bzr)
       print "cd", bzr
       os.system("bzr pull")
