@@ -20,19 +20,23 @@ def through_dirs(path, proc=None, fileFilter=None):
 # Вычисляет контрольную сумму файла. Результат пишет в файл.md5
 def md5sumCreate(file):
   fd = open(file + ".md5", "wb")
-  fd.write("%s\t*%s\n" % (md5sum(file).hexdigest(), os.path.basename(file)))
+  try:
+    fd.write("%s\t*%s\n" % (md5sum(file).hexdigest(), os.path.basename(file)))
+  finally:
+    fd.close()
 
 # Вычисляет контрольную сумму файла
 def md5sum(file):
   sum = hashlib.md5()
   fd = open(file, "rb")
-  while True:
-    buf = fd.read(1024 * 1024)
-    if len(buf) == 0:
-      break
-    sum.update(buf)
-  fd.close()
-  return sum
+  try:
+    while True:
+      buf = fd.read(1024 * 1024)
+      if len(buf) == 0:
+        return sum
+      sum.update(buf)
+  finally:
+    fd.close() 
 
 # Создаёт вложенные директории.
 # Если директории уже существуют, ничего не делает
@@ -42,12 +46,24 @@ def mkdirs(path):
     return
   mkdirs(os.path.dirname(path))
   os.mkdir(path)
-  
+
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
-  for rep in os.listdir(dir):
-    if os.path.isdir(dir + '/' + rep) and os.system("svnadmin verify %1s/%2s" % (dir, rep)) != 0:
-      raise IOError("Invalid subversion repository " + rep)
+  svnList = ((1,"conf"), (1,"db"), (1,"hooks"), (1,"locks"), (0,"README.txt"))
+  dirSet = set(os.listdir(dir))
+  for type,name in svnList:
+    path = dir + '/' + name
+    if name not in dirSet or type==1 and not os.path.isdir(path) or type==0 and not os.path.isfile(path):
+      return True
+  fd = open(dir + "/README.txt", "r")
+  try:
+    if not fd.readline().startswith("This is a Subversion repository;"):
+      return True
+  finally:
+    fd.close()
+  if os.system("svnadmin verify %1s" % dir) != 0:
+      raise IOError("Invalid subversion repository " + dir)
+  return False
 
 # Проверяет корректность файлов bzr-репозиториев
 def bzrVerify(dir):
@@ -86,6 +102,10 @@ def bzrVerify(dir):
   return False
 
 # Создаёт резервные копии файла
+# Проверяет корректность репозиториев
+def repoVerify(dir):
+  return not (svnVerify(dir) and bzrVerify(dir))
+
 # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
 class Backup:
   def __init__(self, destDirs, srcDirs, command, suffix, num, rootDir):
@@ -102,10 +122,7 @@ class Backup:
       self.clear(dir)
     for src in srcDirs:
       if "" != src:
-        if "svn" == os.path.basename(src):
-          svnVerify(src)
-        if "bzr" == os.path.basename(src):
-          through_dirs(src, lambda x: None, bzrVerify)
+        through_dirs(src, lambda x: None, repoVerify)
         self.backup(destDirs[0], src)
     for self.dir in destDirs:
       self.recoveryDir("")
