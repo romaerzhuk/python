@@ -12,7 +12,7 @@ class RemoveDeadHeads:
     os.rename(tmp + "/.bzr", ".bzr")
     self.removedir(tmp)
   def clone(self, path):
-    if ".bzr" == path or self.tmp == path:
+    if ".bzr" == path or self.tmp == path or not os.path.isdir(path):
       return
     if ".bzr" == os.path.basename(path):
       print "clone(%1s)" % path
