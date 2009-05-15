@@ -75,11 +75,12 @@ def bzrVerify(dir):
     f = open(conf)
     try:
       reParent = re.compile(r"^parent_location\s*=")
-      reBound = re.compile(r"^bound\s*=\s*True")
-      parent = bound = False
+      reBound = re.compile(r"^bound\s*=\s*False")
+      parent = False 
+      bound = True
       for line in f:
         if reParent.match(line): parent = True
-        elif reBound.match(line): bound = True
+        elif reBound.match(line): bound = False
     finally:
       f.close()
     if bound and os.path.isdir(dir + "/checkout"):
