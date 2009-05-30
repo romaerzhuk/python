@@ -134,7 +134,6 @@ class Backup:
     self.suffix = suffix
     self.num = num
     self.rootDir = rootDir
-
     for src in srcDirs:
       if "" != src:
         through_dirs(src, lambda x: None, repoVerify)
@@ -155,11 +154,11 @@ class Backup:
         key = dir + '/' + host + '-' + src + date + '.' + self.suffix
         path = dst + key
         command = self.command % (os.path.normpath(path), src)
-        if os.path.exists(path):
-          self.remove(key)
+        self.removePair(path)
         #print "command =", command
         os.system(command)
         md5sumCreate(path)
+        self.removeKey(key, self.destDirs[1:])
       except Exception, e:
         print "backup error:", e
   # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий 
@@ -210,17 +209,21 @@ class Backup:
         for dst in f.list:
           self.copy(f.dir+k, dst+k)
     for f in remove:
-      self.remove(key + '/' + f.name)
-  # Удаляет файл во всех директориях
-  def remove(self, key):
-    for dir in self.destDirs:
+      self.removeKey(key + '/' + f.name, self.destDirs)
+  # Удаляет файл в заданных директориях
+  def removeKey(self, key, destDirs):
+    for dir in destDirs:
       path = dir + key
+      self.removePair(path)
+  # Удаляет файл и контрольную сумму
+  def removePair(self, path):
+    if os.path.isfile(path):
+      print "remove %1s" % path 
       self.removeFile(path)
-      self.removeFile(self.md5(path))
+    self.removeFile(self.md5(path))
   # Удаляет файл
   def removeFile(self, path):
     if os.path.isfile(path):
-      #print "remove %1s" % path 
       os.remove(path)
   # Копирует файл с контрольной суммой
   def copy(self, src, dst):
@@ -237,7 +240,11 @@ class Backup:
       md5 = self.md5(path)
       if not os.path.exists(path) or not os.path.exists(md5):
         return False
-      line = file(md5).readline()
+      fd = open(md5)
+      try:
+        line = fd.readline()
+      finally:
+        fd.close()
       #print self.dir, ',', k, " line =", line
       m = self.md5Pattern.match(line)
       if m == None:
