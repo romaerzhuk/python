@@ -62,7 +62,7 @@ def svnVerify(dir):
   finally:
     fd.close()
   if os.system("svnadmin verify %1s" % dir) != 0:
-      raise IOError("Invalid subversion repository " + dir)
+    raise IOError("Invalid subversion repository " + dir)
   return False
 
 # Проверяет корректность файлов bzr-репозиториев
@@ -107,109 +107,125 @@ def bzrVerify(dir):
 def repoVerify(dir):
   return not (svnVerify(dir) and bzrVerify(dir))
 
+# Файл, подготовленный к восстановлению
+class RecoveryEntry:
+  def __init__(self,name):
+    self.dir  = None # имя директории с корректным файлом
+    self.name = name # имя файла
+    self.list = []   # список директорий, куда нужно восстанавливать файл
+  def __cmp__(self,entry):
+    if self.dir != None:
+      if entry.dir == None:
+        return -1
+    elif entry.dir != None:
+      return 1
+    return ((entry.date >= self.date) << 1) - 1
+  def __repr__(self):
+    return 'name=%1s, dir=%2s, list=%3s]' % (self.name, self.dir, self.list)
+
 # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
 class Backup:
   def __init__(self, destDirs, srcDirs, command, suffix, num, rootDir):
     self.md5Pattern = re.compile(r"^(\S+)\s+\*(.+)$")
     self.removePattern = re.compile(r'\d\d\d\d-\d\d-\d\d')
-    self.set = set()
+    self.dirSet = set()
     self.destDirs = destDirs
     self.command = command
     self.suffix = suffix
-    self.num = num * 2 # должны быть ещё файлы с контрольными суммами
+    self.num = num
     self.rootDir = rootDir
 
-    for dir in destDirs:
-      self.clear(dir)
     for src in srcDirs:
       if "" != src:
         through_dirs(src, lambda x: None, repoVerify)
-        self.backup(destDirs[0], src)
-    for self.dir in destDirs:
-      self.recoveryDir("")
-    for dir in destDirs:
-      self.clear(dir)
-  # Удаляет из директорий устаревшие файлы
-  def clear(self, dir):
-    try:
-      through_dirs(dir, self)
-    except Exception, e:
-      print "clear error:", e
-  # Удаляет из директории устаревшие файлы. Оставляет последние num-файлов
-  def __call__(self, path):
-    r = self.removePattern
-    list = filter(lambda i: r.search(i) != None, os.listdir(path))
-    list.sort(lambda x, y: ((r.search(y).group(0) >= r.search(x).group(0)) << 1) - 1)
-    #print list[self.num:]
-    for i in list[self.num:]:
-      os.remove(path + '/' + i)
+        self.backup(src)
+    self.recoveryDirs("")
   # Создаёт резервные копии файла
-  def backup(self, dir, src):
+  def backup(self, src):
       try:
-        #print dir, src
+        dst = self.destDirs[0]
+        #print dst, src
         date = time.strftime("%Y-%m-%d")
         host = socket.gethostname()
-        self.dir = dir
-        #print "src.dir =", os.path.dirname(src)
+        #print "dst =", os.path.dirname(src)
         os.chdir(os.path.dirname(src))
         src = os.path.basename(src)
         dir = '/' + self.rootDir + '/' + host + '-' + src
-        mkdirs(self.path(dir))
+        mkdirs(dst + dir)
         key = dir + '/' + host + '-' + src + date + '.' + self.suffix
-        path = self.path(key)
+        path = dst + key
         command = self.command % (os.path.normpath(path), src)
         if os.path.exists(path):
-          os.remove(path)
-        self.set.add(key)
+          self.remove(key)
         #print "command =", command
         os.system(command)
         md5sumCreate(path)
-        self.clear(self.path(dir))
-        
-        #print "copy backup dirs..."
-        destDirs = set(self.destDirs)
-        destDirs.remove(self.dir)
-        #print "for self.dif in", destDirs 
-        for self.dir in destDirs:
-          #print "copy backup", self.dir
-          self.copy(path, self.path(key))
-          self.clear(self.path(dir))
       except Exception, e:
         print "backup error:", e
   # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий 
-  def recoveryDir(self, key):
-    path = self.path(key)
-    if not os.path.isdir(path):
+  def recoveryDirs(self, key):
+    if key in self.dirSet:
       return
-    for name in os.listdir(path):
-      k = key + '/' + name
-      path = self.path(k)
-      if os.path.isdir(path):
-        self.recoveryDir(k)
-      else:
-        if not k.endswith(".md5") and not (k in self.set):
-          self.set.add(k)
-          self.recoveryFile(name, k)
-  # Восстанавливает повреждённй или отсутствующий файл из зеркальных копий 
-  def recoveryFile(self, name, key):        
-    src = None
-    dstSet = set()
+    #print "recovery dir %1s" % key
+    self.dirSet.add(key)
+    fileDict = dict()
+    list,other=[],[]
+    for dst in self.destDirs:
+      path = dst + key
+      if not os.path.isdir(path):
+        continue
+      for name in os.listdir(path):
+        k = key + '/' + name
+        path = dst + k
+        if os.path.isdir(path):
+          self.recoveryDirs(k)
+        else:
+          if not name.endswith(".md5") and not name in fileDict:
+            fileDict[name] = entry = RecoveryEntry(name)
+            matcher = self.removePattern.search(name)
+            if matcher == None:
+              other.append(entry)
+            else:
+              list.append(entry)
+              entry.date = matcher.group(0) 
+    if len(fileDict) == 0:
+      return
+    for (name, entry) in fileDict.items():
+      for dst in self.destDirs:
+        path = dst + key + '/' + name
+        if not self.correct(name, path):
+          entry.list.append(dst) 
+        else:
+          if entry.dir == None:
+            entry.dir = dst
+    list.sort()
+    recovery = other + list[:self.num]
+    remove   = list[self.num:]
+    #print " all=%1s\n  recovery=%2s\n  remove=%3s" % (other + list, recovery, remove)
+    for f in recovery:
+      k = key + '/' + f.name
+      if f.dir == None:
+        print "corrupt error: %1s" % k
+      else: 
+        for dst in f.list:
+          self.copy(f.dir+k, dst+k)
+    for f in remove:
+      self.remove(key + '/' + f.name)
+  # Удаляет файл во всех директориях
+  def remove(self, key):
     for dir in self.destDirs:
-      dst = dir + key
-      if not self.correct(name, dst):
-        dstSet.add(dst)
-      elif src == None:
-        src = dst
-    if src == None:
-      print "corrupted error:", key
-    else:
-      for dst in dstSet: 
-        print "recover %1s from %2s" % (dst, src)
-        self.copy(src, dst)
-  # Копирует файл с контрольой суммой
+      path = dir + key
+      self.removeFile(path)
+      self.removeFile(self.md5(path))
+  # Удаляет файл
+  def removeFile(self, path):
+    if os.path.isfile(path):
+      #print "remove %1s" % path 
+      os.remove(path)
+  # Копирует файл с контрольной суммой
   def copy(self, src, dst):
     try:
-      #print "copy", src, dst
+      print "copy %1s %2s" % (src, dst)
       mkdirs(os.path.dirname(dst))
       shutil.copy(src, dst)
       shutil.copy(self.md5(src), self.md5(dst))
@@ -232,9 +248,6 @@ class Backup:
     except Exception, e:
       print "md5sum check error:", e
       return False
-  # Возвращает полный путь файла
-  def path(self, key):
-    return self.dir + key
   # Возвращает имя файла с контрольной суммой
   def md5(self, path):
     return path + ".md5"
