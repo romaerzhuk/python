@@ -128,12 +128,12 @@ class Backup:
   def __init__(self, destDirs, srcDirs, command, suffix, num, rootDir):
     self.md5Pattern = re.compile(r"^(\S+)\s+\*(.+)$")
     self.removePattern = re.compile(r'\d\d\d\d-\d\d-\d\d')
-    self.dirSet = set()
     self.destDirs = destDirs
     self.command = command
     self.suffix = suffix
     self.num = num
     self.rootDir = rootDir
+    self.dirSet = set()
     for src in srcDirs:
       if "" != src:
         through_dirs(src, lambda x: None, repoVerify)
