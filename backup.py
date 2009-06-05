@@ -47,6 +47,14 @@ def mkdirs(path):
   mkdirs(os.path.dirname(path))
   os.mkdir(path)
 
+# Читает первую строку из файла
+def readline(file):
+  fd = open(file, "r")
+  try:
+    return fd.readline()
+  finally:
+    fd.close()
+
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
   svnList = ((1,"conf"), (1,"db"), (1,"hooks"), (1,"locks"), (0,"README.txt"))
@@ -55,12 +63,8 @@ def svnVerify(dir):
     path = dir + '/' + name
     if name not in dirSet or type==1 and not os.path.isdir(path) or type==0 and not os.path.isfile(path):
       return True
-  fd = open(dir + "/README.txt", "r")
-  try:
-    if not fd.readline().startswith("This is a Subversion repository;"):
-      return True
-  finally:
-    fd.close()
+  if not readline(dir + "/README.txt").startswith("This is a Subversion repository;"):
+    return True
   if os.system("svnadmin verify %1s" % dir) != 0:
     raise IOError("Invalid subversion repository " + dir)
   return False
@@ -240,13 +244,8 @@ class Backup:
       md5 = self.md5(path)
       if not os.path.exists(path) or not os.path.exists(md5):
         return False
-      fd = open(md5)
-      try:
-        line = fd.readline()
-      finally:
-        fd.close()
-      #print self.dir, ',', k, " line =", line
-      m = self.md5Pattern.match(line)
+      #print self.dir, ',', k, " line =", readline(md5)
+      m = self.md5Pattern.match(readline(md5))
       if m == None:
         return False
       real = md5sum(path).hexdigest()
