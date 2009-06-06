@@ -31,7 +31,7 @@ class Main(QtGui.QWidget):
     self.connect(ok, QtCore.SIGNAL("clicked()"), self.resktop)
     grid.addWidget(ok, 1, 0, 1, 2)
     self.setLayout(grid)
-    self.resize(270, 80)
+    self.resize(300, 80)
     desktop = app.desktop()
     self.move((desktop.width() - self.width()) / 2,
         (desktop.height() - self.height()) / 2)
