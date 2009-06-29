@@ -47,4 +47,4 @@ def mkdirs(path):
   os.mkdir(path)
 
 if __name__ == "__main__":
-  RemoveDeadHeads("--1.14-rich-root --no-tree", "bzr-repo.tmp")
+  RemoveDeadHeads("--2a --no-tree", "bzr-repo.tmp")
