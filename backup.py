@@ -98,9 +98,11 @@ def bzrVerify(dir):
     res = os.system("bzr check %1s" % bzr)
     if res != 0 and notWin:
       raise IOError("Invalid bazaar repository %1s, result=%2s" % (bzr, res))
-    res = os.system("bzr pack %1s" % bzr)
-    if res != 0 and notWin:
-      raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
+    packs = dir + "/repository/packs"
+    if os.path.isdir(packs) and len(os.listdir(packs)) > 1:
+      res = os.system("bzr pack %1s" % bzr)
+      if res != 0 and notWin:
+        raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
     dir += "/repository/obsolete_packs"
     for file in os.listdir(dir):
       os.remove(dir + '/' + file)
