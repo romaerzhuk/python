@@ -75,7 +75,7 @@ def svnVerify(dir):
       return True
   if not readline(dir + "/README.txt").startswith("This is a Subversion repository;"):
     return True
-  print "svn found:", svn
+  print "svn found:", dir
   if system("svnadmin verify %1s" % dir) != 0:
     raise IOError("Invalid subversion repository " + dir)
   return False
