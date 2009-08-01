@@ -55,6 +55,16 @@ def readline(file):
   finally:
     fd.close()
 
+# Вызывает системную команду и выводит эхо на стандартный вывод
+def system(command):
+  print command
+  return os.system(command)
+
+# Меняет текущую директорию и выводит эхо на стандартный вывод
+def chdir(dir):
+  print "cd", dir
+  os.chdir(dir)
+  
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
   svnList = ((1,"conf"), (1,"db"), (1,"hooks"), (1,"locks"), (0,"README.txt"))
@@ -65,15 +75,18 @@ def svnVerify(dir):
       return True
   if not readline(dir + "/README.txt").startswith("This is a Subversion repository;"):
     return True
-  if os.system("svnadmin verify %1s" % dir) != 0:
+  print "svn found:", svn
+  if system("svnadmin verify %1s" % dir) != 0:
     raise IOError("Invalid subversion repository " + dir)
   return False
 
 # Проверяет корректность файлов bzr-репозиториев
+# Обновляет, перепаковывает
 def bzrVerify(dir):
   if ".bzr" != os.path.basename(dir):
     return True
   bzr = os.path.dirname(dir)
+  print "bzr found:", bzr
   conf = dir + "/branch/branch.conf"
   if os.path.isfile(conf):
     f = open(conf)
@@ -88,19 +101,18 @@ def bzrVerify(dir):
     finally:
       f.close()
     if bound and os.path.isdir(dir + "/checkout"):
-      os.system("bzr update %1s" % bzr)
+      system("bzr update %1s" % bzr)
     elif parent:
-      os.chdir(bzr)
-      print "cd", bzr
-      os.system("bzr pull")
+      chdir(bzr)
+      system("bzr pull")
   if os.path.isdir(dir + "/repository"): 
     notWin = platform.system() != "Windows"
-    res = os.system("bzr check %1s" % bzr)
+    res = system("bzr check %1s" % bzr)
     if res != 0 and notWin:
       raise IOError("Invalid bazaar repository %1s, result=%2s" % (bzr, res))
     packs = dir + "/repository/packs"
     if os.path.isdir(packs) and len(os.listdir(packs)) > 1:
-      res = os.system("bzr pack %1s" % bzr)
+      res = system("bzr pack %1s" % bzr)
       if res != 0 and notWin:
         raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
     dir += "/repository/obsolete_packs"
@@ -108,10 +120,27 @@ def bzrVerify(dir):
       os.remove(dir + '/' + file)
   return False
 
+# Проверяет корректность файлов git-репозиториев
+# Обновляет из svn, перепаковывает
+def gitVerify(dir):
+  if ".git" != os.path.basename(dir):
+    return True
+  git = os.path.dirname(dir)
+  print "git found:", git
+  chdir(git)
+  if os.path.isdir(dir + "/svn"):
+    system("git svn fetch")
+  system("git gc")
+  dir += "/repository/obsolete_packs"
+  res = system("git fsck --full")
+  if res != 0:
+    raise IOError("Invalid git repository %1s, result=%2s" % (os.path.dirname(dir), res))
+  return False
+
 # Создаёт резервные копии файла
 # Проверяет корректность репозиториев
 def repoVerify(dir):
-  return not (svnVerify(dir) and bzrVerify(dir))
+  return not (svnVerify(dir) and bzrVerify(dir) and gitVerify(dir))
 
 # Файл, подготовленный к восстановлению
 class RecoveryEntry:
@@ -153,7 +182,7 @@ class Backup:
         date = time.strftime("%Y-%m-%d")
         host = socket.gethostname()
         #print "dst =", os.path.dirname(src)
-        os.chdir(os.path.dirname(src))
+        chdir(os.path.dirname(src))
         src = os.path.basename(src)
         dir = '/' + self.rootDir + '/' + host + '-' + src
         mkdirs(dst + dir)
@@ -161,12 +190,11 @@ class Backup:
         path = dst + key
         command = self.command % (os.path.normpath(path), src)
         self.removePair(path)
-        #print "command =", command
-        os.system(command)
+        system(command)
         md5sumCreate(path)
         self.removeKey(key, self.destDirs[1:])
       except Exception, e:
-        print "backup error:", e
+        print "backup error:", e        
   # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий 
   def recoveryDirs(self, key):
     if key in self.dirSet:
