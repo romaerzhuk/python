@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 
-import sys, os, re, time, hashlib, socket, tarfile, shutil, platform
+import sys, os, re, time, hashlib, socket, tarfile, shutil, platform, time
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, proc=None, fileFilter=None):
@@ -25,11 +25,20 @@ def md5sumCreate(file):
   finally:
     fd.close()
 
+# Засекает время выполнения команды
+class StopWatch:
+  def __init__(self, msg):
+    self.msg = msg
+    self.start = time.time()
+  def stop(self):
+    print "[%1s]: %2s sec" % (self.msg, time.time()-self.start)
+
 # Вычисляет контрольную сумму файла
 def md5sum(file):
-  sum = hashlib.md5()
+  sw = StopWatch("md5sum(%1s)" % file)
   fd = open(file, "rb")
   try:
+    sum = hashlib.md5()
     while True:
       buf = fd.read(1024 * 1024)
       if len(buf) == 0:
@@ -37,6 +46,7 @@ def md5sum(file):
       sum.update(buf)
   finally:
     fd.close() 
+    sw.stop()
 
 # Создаёт вложенные директории.
 # Если директории уже существуют, ничего не делает
@@ -57,8 +67,10 @@ def readline(file):
 
 # Вызывает системную команду и выводит эхо на стандартный вывод
 def system(command):
-  print command
-  return os.system(command)
+  sw = StopWatch(command)
+  res = os.system(command)
+  sw.stop()
+  return res
 
 # Меняет текущую директорию и выводит эхо на стандартный вывод
 def chdir(dir):
@@ -252,8 +264,9 @@ class Backup:
   # Удаляет файл и контрольную сумму
   def removePair(self, path):
     if os.path.isfile(path):
-      print "remove %1s" % path 
+      sw = StopWatch("rm %1s" % path)
       self.removeFile(path)
+      sw.stop()
     self.removeFile(self.md5(path))
   # Удаляет файл
   def removeFile(self, path):
@@ -261,13 +274,15 @@ class Backup:
       os.remove(path)
   # Копирует файл с контрольной суммой
   def copy(self, src, dst):
+    sw = StopWatch("cp %1s %2s" % (src, dst))
     try:
-      print "copy %1s %2s" % (src, dst)
       mkdirs(os.path.dirname(dst))
       shutil.copy(src, dst)
       shutil.copy(self.md5(src), self.md5(dst))
     except Exception, e:
       print "copy error:", e
+    finally:
+      sw.stop()
   # Проверяет контрольую сумму файла
   def correct(self, name, path):
     try:
