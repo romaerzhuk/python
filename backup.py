@@ -17,14 +17,6 @@ def through_dirs(path, proc = None, fileFilter = None):
     if os.path.isdir(s):
       through_dirs(s, proc, fileFilter)
 
-# Вычисляет контрольную сумму файла. Результат пишет в файл.md5
-def md5sumCreate(file):
-  fd = open(file + ".md5", "wb")
-  try:
-    fd.write("%s\t*%s\n" % (md5sum(file).hexdigest(), os.path.basename(file)))
-  finally:
-    close(fd)
-
 # Закрывает файл с проверкой на None
 def close(fd):
   if fd != None:
