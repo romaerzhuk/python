@@ -32,7 +32,6 @@ class StopWatch:
 
 # Вычисляет контрольную сумму файла в шестнадцатиричном виде
 def md5sum(file):
-  sw = StopWatch("md5sum %1s" % file)
   fd = open(file, "rb")
   try:
     sum = hashlib.md5()
@@ -43,7 +42,6 @@ def md5sum(file):
       sum.update(buf)
   finally:
     close(fd)
-    sw.stop()
 
 # Создаёт вложенные директории.
 # Если директории уже существуют, ничего не делает
@@ -180,6 +178,7 @@ class Backup:
     self.rootDir = rootDir
     self.dirSet = set()
     self.md5sums = dict()
+    self.md5cache = (None, None)
     for src in srcDirs:
       if "" != src:
         through_dirs(src, lambda x: None, repoVerify)
@@ -238,11 +237,11 @@ class Backup:
     for (name, entry) in fileDict.items():
       for dst in self.destDirs:
         path = dst + key + '/' + name
-        if path in self.md5sums:
-          md5 = self.md5sums[path]
-          md5dirs.add(dst)
-        else:
+        md5 = self.md5sums.get(path)
+        if md5 == None:
           md5 = self.correct(path)
+        else:
+          md5dirs.add(dst)
         if md5 == None:
           md5dirs.add(dst)
           entry.list.append(dst)
@@ -306,33 +305,41 @@ class Backup:
       sw.stop()
   # Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
   def correct(self, path):
-    fd = None
     try:
       if not os.path.isfile(path):
         return None
       dir = os.path.dirname(path) + '/'
-      md5 = dir + ".md5" # контрольные суммы всех файлов директории
-      if not os.path.isfile(md5):
-        md5 = dir + os.path.basename(path) + ".md5" # устаревший файл
-        if not os.path.isfile(md5):
-          return None
-      fd = open(md5, "r")
-      while True:
-        line = fd.readline()
-        if len(line) == 0:
-          return None
-        m = self.md5Pattern.match(line)
-        if m != None and m.group(2) == os.path.basename(path):
-          stored = m.group(1).lower()
-          real = md5sum(path)
-          if stored == real:
-            return real
-          return None
+      name = os.path.basename(path)
+      if dir == self.md5cache[0]:
+        lines = self.md5cache[1]
+      else:
+        lines = self.loadMd5(dir + ".md5") # контрольные суммы всех файлов директории
+        self.md5cache = (dir, lines)
+      stored = lines.get(name)
+      if stored == None:
+        stored = self.loadMd5(dir + name + ".md5").get(name) # устаревший файл
+      if stored == None:
+        return None
+      real = md5sum(path)
+      if stored == real:
+        return real
+      return None
     except Exception, e:
       print "md5sum check error:", e
       return None
-    finally:
-      close(fd)
+  # Загружает множество контрольных сумм из файла
+  def loadMd5(self, path):
+    lines = dict()
+    if os.path.isfile(path):
+      fd = open(path, "r")
+      try:
+        for line in fd:
+          m = self.md5Pattern.match(line)
+          if m != None:
+            lines[m.group(2)] = m.group(1).lower()
+      finally:
+        close(fd)
+    return lines
 
 if __name__ == '__main__':
   if len(sys.argv) < 6:
