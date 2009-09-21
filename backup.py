@@ -213,6 +213,7 @@ class Backup:
     self.dirSet.add(key)
     list, other = [], []
     fileDict = dict()
+    md5dirs = set()
     for dst in self.destDirs:
       path = dst + key
       if not os.path.isdir(path):
@@ -222,8 +223,11 @@ class Backup:
         path = dst + k
         if os.path.isdir(path):
           self.recoveryDirs(k)
-        else:
-          if not name.endswith(".md5") and not name in fileDict:
+        elif os.path.isfile(path):
+          if name.endswith(".md5"):
+            if name != ".md5":
+              md5dirs.add(dst)
+          elif not name in fileDict:
             fileDict[name] = entry = RecoveryEntry(name)
             matcher = self.removePattern.search(name)
             if matcher == None:
@@ -233,7 +237,6 @@ class Backup:
               entry.date = matcher.group(0)
     if len(fileDict) == 0:
       return
-    md5dirs = set()
     for (name, entry) in fileDict.items():
       for dst in self.destDirs:
         path = dst + key + '/' + name
@@ -269,9 +272,14 @@ class Backup:
     for dst in md5dirs:
       fd = None
       try:
-        fd = open(dst + key + "/.md5", "wb")
+        dir = dst + key
+        fd = open(dir + "/.md5", "wb")
         for f in md5files:
           fd.write("%s\t*%s\n" % (f.md5[dst], f.name))
+        for name in os.listdir(dir):
+          path = dir + '/' + name
+          if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
+            self.removeFile(path)
       except Exception, e:
         print "md5sum error:", e
       finally:
