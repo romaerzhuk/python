@@ -274,7 +274,7 @@ class Backup:
       try:
         dir = dst + key
         name = dir + "/.md5"
-        self.removeFile(name) # иначе глючит QNAP 109
+        self.removeFile(name)
         fd = open(name, "wb")
         for f in md5files:
           fd.write("%s\t*%s\n" % (f.md5[dst], f.name))
@@ -308,6 +308,7 @@ class Backup:
     sw = StopWatch("cp %1s %2s" % (src, dst))
     try:
       mkdirs(os.path.dirname(dst))
+      self.removeFile(dst)
       shutil.copy(src, dst)
     except Exception, e:
       print "copy error:", e
