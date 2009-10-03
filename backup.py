@@ -273,7 +273,9 @@ class Backup:
       fd = None
       try:
         dir = dst + key
-        fd = open(dir + "/.md5", "wb")
+        name = dir + "/.md5"
+        self.removeFile(name) # иначе глючит QNAP 109
+        fd = open(name, "wb")
         for f in md5files:
           fd.write("%s\t*%s\n" % (f.md5[dst], f.name))
         for name in os.listdir(dir):
