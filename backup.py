@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 
+from __future__ import with_statement
 import sys, os, re, time, hashlib, socket, tarfile, shutil, platform, time
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
@@ -17,11 +18,6 @@ def through_dirs(path, proc = None, fileFilter = None):
     if os.path.isdir(s):
       through_dirs(s, proc, fileFilter)
 
-# Закрывает файл с проверкой на None
-def close(fd):
-  if fd != None:
-    fd.close()
-
 # Засекает время выполнения команды
 class StopWatch:
   def __init__(self, msg):
@@ -32,16 +28,13 @@ class StopWatch:
 
 # Вычисляет контрольную сумму файла в шестнадцатиричном виде
 def md5sum(file):
-  fd = open(file, "rb")
-  try:
+  with open(file, "rb") as fd:
     sum = hashlib.md5()
     while True:
       buf = fd.read(1024 * 1024)
       if len(buf) == 0:
         return sum.hexdigest().lower()
       sum.update(buf)
-  finally:
-    close(fd)
 
 # Создаёт вложенные директории.
 # Если директории уже существуют, ничего не делает
@@ -54,11 +47,8 @@ def mkdirs(path):
 
 # Читает первую строку из файла
 def readline(file):
-  fd = open(file, "r")
-  try:
+  with open(file, "r") as fd:
     return fd.readline()
-  finally:
-    close(fd)
 
 # Вызывает системную команду и выводит эхо на стандартный вывод
 def system(command):
@@ -96,17 +86,14 @@ def bzrVerify(dir):
   print "bzr found:", bzr
   conf = dir + "/branch/branch.conf"
   if os.path.isfile(conf):
-    f = open(conf)
-    try:
-      reParent = re.compile(r"^parent_location\s*=")
-      reBound = re.compile(r"^bound\s*=\s*False")
-      parent = False
-      bound = True
+    reParent = re.compile(r"^parent_location\s*=")
+    reBound = re.compile(r"^bound\s*=\s*False")
+    parent = False
+    bound = True
+    with open(conf) as f:
       for line in f:
         if reParent.match(line): parent = True
         elif reBound.match(line): bound = False
-    finally:
-      f.close()
     if bound and os.path.isdir(dir + "/checkout"):
       system("bzr update %s" % bzr)
     elif parent:
@@ -270,22 +257,19 @@ class Backup:
     for f in remove:
       self.removeKey(key + '/' + f.name, self.destDirs)
     for dst in md5dirs:
-      fd = None
       try:
         dir = dst + key
         name = dir + "/.md5"
         self.removeFile(name)
-        fd = open(name, "wb")
-        for f in md5files:
-          fd.write("%s\t*%s\n" % (f.md5[dst], f.name))
-        for name in os.listdir(dir):
-          path = dir + '/' + name
-          if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
-            self.removeFile(path)
+        with open(name, "wb") as fd:
+          for f in md5files:
+            fd.write("%s\t*%s\n" % (f.md5[dst], f.name))
+          for name in os.listdir(dir):
+            path = dir + '/' + name
+            if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
+              self.removeFile(path)
       except Exception, e:
         print "md5sum error:", e
-      finally:
-        close(fd)
 
   # Удаляет файл в заданных директориях
   def removeKey(self, key, destDirs):
@@ -342,14 +326,11 @@ class Backup:
   def loadMd5(self, path):
     lines = dict()
     if os.path.isfile(path):
-      fd = open(path, "r")
-      try:
+      with open(path, "r") as fd:
         for line in fd:
           m = self.md5Pattern.match(line)
           if m != None:
             lines[m.group(2)] = m.group(1).lower()
-      finally:
-        close(fd)
     return lines
 
 if __name__ == '__main__':
