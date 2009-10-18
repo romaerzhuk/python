@@ -28,7 +28,7 @@ class StopWatch:
     self.msg = msg
     self.start = time.time()
   def stop(self):
-    print "[%1s]: %2s sec" % (self.msg, time.time() - self.start)
+    print "[%s]: %s sec" % (self.msg, time.time() - self.start)
 
 # Вычисляет контрольную сумму файла в шестнадцатиричном виде
 def md5sum(file):
@@ -83,7 +83,7 @@ def svnVerify(dir):
   if not readline(dir + "/README.txt").startswith("This is a Subversion repository;"):
     return True
   print "svn found:", dir
-  if system("svnadmin verify %1s" % dir) != 0:
+  if system("svnadmin verify %s" % dir) != 0:
     raise IOError("Invalid subversion repository " + dir)
   return False
 
@@ -108,20 +108,20 @@ def bzrVerify(dir):
     finally:
       f.close()
     if bound and os.path.isdir(dir + "/checkout"):
-      system("bzr update %1s" % bzr)
+      system("bzr update %s" % bzr)
     elif parent:
       chdir(bzr)
       system("bzr pull")
   if os.path.isdir(dir + "/repository"):
     notWin = platform.system() != "Windows"
-    res = system("bzr check %1s" % bzr)
+    res = system("bzr check %s" % bzr)
     if res != 0 and notWin:
-      raise IOError("Invalid bazaar repository %1s, result=%2s" % (bzr, res))
+      raise IOError("Invalid bazaar repository %s, result=%s" % (bzr, res))
     packs = dir + "/repository/packs"
     if os.path.isdir(packs) and len(os.listdir(packs)) > 1:
-      res = system("bzr pack %1s" % bzr)
+      res = system("bzr pack %s" % bzr)
       if res != 0 and notWin:
-        raise IOError("Bazaar pack error %1s, result=%2s" % (bzr, res))
+        raise IOError("Bazaar pack error %s, result=%s" % (bzr, res))
     dir += "/repository/obsolete_packs"
     for file in os.listdir(dir):
       os.remove(dir + '/' + file)
@@ -141,7 +141,7 @@ def gitVerify(dir):
   dir += "/repository/obsolete_packs"
   res = system("git fsck --full")
   if res != 0:
-    raise IOError("Invalid git repository %1s, result=%2s" % (os.path.dirname(dir), res))
+    raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
   return False
 
 # Создаёт резервные копии файла
@@ -164,7 +164,7 @@ class RecoveryEntry:
       return 1
     return ((entry.date >= self.date) << 1) - 1
   def __repr__(self):
-    return 'name=%1s, dir=%2s, list=%3s]' % (self.name, self.dir, self.list)
+    return 'name=%s, dir=%s, list=%s]' % (self.name, self.dir, self.list)
 
 # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
 class Backup:
@@ -260,7 +260,7 @@ class Backup:
     for f in recovery:
       k = key + '/' + f.name
       if f.dir == None:
-        print "corrupt error: %1s" % k
+        print "corrupt error: %s" % k
       else:
         md5files.append(f)
         for dst in f.list:
@@ -305,7 +305,7 @@ class Backup:
       os.remove(path)
   # Копирует файл
   def copy(self, src, dst):
-    sw = StopWatch("cp %1s %2s" % (src, dst))
+    sw = StopWatch("cp %s %s" % (src, dst))
     try:
       mkdirs(os.path.dirname(dst))
       self.removeFile(dst)
@@ -355,7 +355,7 @@ class Backup:
 if __name__ == '__main__':
   if len(sys.argv) < 6:
     print "Usage: backup.py destDirs srcDirs archivingCommand fileSuffix numberOfFiles [rootDir]"
-    print "Example: backup.py /var/backup $HOME/src 'tar czf %1s %2s' tar.gz 3"
+    print "Example: backup.py /var/backup $HOME/src 'tar czf %s %s' tar.gz 3"
   else:
     if len(sys.argv) >= 7:
       root = sys.argv[6]
