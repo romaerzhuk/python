@@ -429,8 +429,8 @@ def hostname(index):
     return sys.argv[index]
   return socket.gethostname()
 
-# Возвращает sys.argv[index], или выводит справку и завершает работу
-def argv(index):
+# Возвращает sys.arg[index], или выводит справку и завершает работу
+def arg(index):
   if len(sys.argv) > index:
     return sys.argv[index]
   help()
@@ -440,27 +440,27 @@ def help():
   print "Usage: backup.py command [options]"
   print "\ncommands:"
   print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [rootDir] -- dumps, clones and checks md5 sums"
-  print "\tdump srcDirs destDirs arvivingCommand fileSufix [rootDir] -- dumps source directories and writes md5 check sums"
+  print "\tdump srcDirs destDirs archivingCommand fileSufix [rootDir] -- dumps source directories and writes md5 check sums"
   print "\tsvn-dump srcDir destDir [rootDir] -- dumps svn directories and writes md5 check sums"
   print "\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files"
   print "\nExamples:"
   print "\tbackup.py full $HOME/src /local/backup,/remote/backup 'tar czf %s %s' tar.gz 3"
-  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup 'tar czf %s %s' tar.gz host-name"
+  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup '7z a %s %s' 7z myhost"
   print "\tbackup.py clone /local/backup,/remote/backup2 5"
   print "\tbackup.py svn-dump /var/svn /var/backup"
   sys.exit()
 
 if __name__ == '__main__':
   sw = StopWatch("backup")
-  command = argv(1)
+  command = arg(1)
   if "full" == command:
-    Backup(argv(2).split(","), argv(3).split(","), argv(4), argv(5), int(argv(6)), hostname(7)).full()
+    Backup(arg(2).split(","), arg(3).split(","), arg(4), arg(5), int(arg(6)), hostname(7)).full()
   elif "dump" == command:
-    Backup(argv(2).split(","), argv(3).split(","), argv(4), argv(5), None, hostname(6)).dump()
+    Backup(arg(2).split(","), arg(3).split(","), arg(4), arg(5), None, hostname(6)).dump()
   elif "clone" == command:
-    Backup([], argv(2).split(","), None, None, int(argv(3)), None).clone()
+    Backup([], arg(2).split(","), None, None, int(arg(3)), None).clone()
   elif "svn-dump" == command:
-    SvnDump(argv(2), argv(3), hostname(4))
+    SvnDump(arg(2), arg(3), hostname(4))
   else:
     help()
   sw.stop()
