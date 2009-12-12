@@ -6,12 +6,12 @@ import sys, os, re, time, hashlib, socket, shutil, platform
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, filter = None):
-  if path == '.': prefix = ''
-  else: prefix = path + '/'
   if filter == None:
     print path
-  elif not filter(path):
+  elif filter(path):
     return
+  if path == '.': prefix = ''
+  else: prefix = path + '/'
   for i in os.listdir(path):
     s = prefix + i
     if os.path.isdir(s):
@@ -87,17 +87,17 @@ def isSubversion(dir):
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
   if not isSubversion(dir):
-    return True
+    return False
   print "svn found:", dir
   if system("svnadmin verify %s" % dir) != 0:
     raise IOError("Invalid subversion repository " + dir)
-  return False
+  return True
 
 # Проверяет корректность файлов bzr-репозиториев
 # Обновляет, перепаковывает
 def bzrVerify(dir):
   if ".bzr" != os.path.basename(dir):
-    return True
+    return False
   bzr = os.path.dirname(dir)
   print "bzr found:", bzr
   conf = dir + "/branch/branch.conf"
@@ -128,13 +128,13 @@ def bzrVerify(dir):
     dir += "/repository/obsolete_packs"
     for file in os.listdir(dir):
       os.remove(dir + '/' + file)
-  return False
+  return True
 
 # Проверяет корректность файлов git-репозиториев
 # Обновляет из svn, перепаковывает
 def gitVerify(dir):
   if ".git" != os.path.basename(dir):
-    return True
+    return False
   git = os.path.dirname(dir)
   print "git found:", git
   chdir(git)
@@ -145,12 +145,12 @@ def gitVerify(dir):
   res = system("git fsck --full")
   if res != 0:
     raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
-  return False
+  return True
 
 # Создаёт резервные копии файла
 # Проверяет корректность репозиториев
 def repoVerify(dir):
-  return not (svnVerify(dir) and bzrVerify(dir) and gitVerify(dir))
+  return svnVerify(dir) or bzrVerify(dir) or gitVerify(dir)
 
 # Удаляет файл
 def removeFile(path):
@@ -393,7 +393,7 @@ class SvnDump:
     through_dirs(src, self.dump)
   def dump(self, dir):
     if not isSubversion(dir):
-      return True
+      return False
     dst = self.dst + dir[self.lenght:]
     info = dst + "/.info"
     dump = dst + "/.dump"
@@ -417,7 +417,7 @@ class SvnDump:
         with open(dst + "/.md5", "a+b") as fd:
             writeMd5(fd, md5sum(dump), dumpname)
         os.rename(dump, dst + '/' + dumpname)
-      return False
+      return True
     finally:
       removeFile(info)
       removeFile(dump)
