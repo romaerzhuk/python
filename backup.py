@@ -8,11 +8,10 @@ import sys, os, re, time, hashlib, socket, shutil, platform
 def through_dirs(path, filter = None):
   if path == '.': prefix = ''
   else: prefix = path + '/'
-  if filter == None or filter(path):
-    if filter == None:
-      print path
-    else:
-      filter(path)
+  if filter == None:
+    print path
+  elif not filter(path):
+    return
   for i in os.listdir(path):
     s = prefix + i
     if os.path.isdir(s):
