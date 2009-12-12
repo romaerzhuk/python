@@ -5,18 +5,18 @@ from __future__ import with_statement
 import sys, os, re, time, hashlib, socket, tarfile, shutil, platform, time
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
-def through_dirs(path, proc = None, fileFilter = None):
+def through_dirs(path, filter = None):
   if path == '.': prefix = ''
   else: prefix = path + '/'
-  if fileFilter == None or fileFilter(path):
-    if proc == None:
+  if filter == None or filter(path):
+    if filter == None:
       print path
     else:
-      proc(path)
+      filter(path)
   for i in os.listdir(path):
     s = prefix + i
     if os.path.isdir(s):
-      through_dirs(s, proc, fileFilter)
+      through_dirs(s, filter)
 
 # Засекает время выполнения команды
 class StopWatch:
@@ -206,7 +206,7 @@ class Backup:
     try:
       if "" == src:
         return
-      through_dirs(src, lambda x: None, repoVerify)
+      through_dirs(src, repoVerify)
       dst = self.destDirs[0]
       #print dst, src
       date = time.strftime("%Y-%m-%d")
@@ -390,8 +390,8 @@ class SvnDump:
   def __init__(self, src, dst, hostname):
     self.dst = dst + '/' + hostname + '/' + hostname + '-' + os.path.basename(src) + '/'
     self.lenght = len(src) + 1
-    self.pattern = re.compile(r"^(.+)-\d+\.\.(\d+)\.dump\.gz$")
-    through_dirs(src, lambda x: None, self.dump)
+    self.pattern = re.compile(r"^(.+)-\d+\.\.(\d+)\.svndmp\.gz$")
+    through_dirs(src, self.dump)
   def dump(self, dir):
     if not isSubversion(dir):
       return True
@@ -414,7 +414,7 @@ class SvnDump:
         if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
                   % (oldrev, newrev, dir, dump)) != 0:
           raise IOError("Invalid subversion dumping")
-        dumpname = "%s-%s..%s.dump.gz" % (name, oldrev, newrev)
+        dumpname = "%s-%06d..%06d.svndmp.gz" % (name, oldrev, newrev)
         with open(dst + "/.md5", "a+b") as fd:
             writeMd5(fd, md5sum(dump), dumpname)
         os.rename(dump, dst + '/' + dumpname)
