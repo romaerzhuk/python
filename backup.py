@@ -439,8 +439,8 @@ def argv(index):
 def help():
   print "Usage: backup.py command [options]"
   print "\ncommands:"
-  print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [rootDir] -- dumps, clones and check md5 sums"
-  print "\tdump srcDirs destDirs arvivingCommand fileSufix [rootDir] -- dumps src dirs and writes md5 check sums"
+  print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [rootDir] -- dumps, clones and checks md5 sums"
+  print "\tdump srcDirs destDirs arvivingCommand fileSufix [rootDir] -- dumps source directories and writes md5 check sums"
   print "\tsvn-dump srcDir destDir [rootDir] -- dumps svn directories and writes md5 check sums"
   print "\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files"
   print "\nExamples:"
