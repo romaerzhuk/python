@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, tarfile, shutil, platform, time
+import sys, os, re, time, hashlib, socket, shutil, platform
 
 # Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, filter = None):
