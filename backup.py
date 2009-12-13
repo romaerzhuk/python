@@ -485,12 +485,9 @@ def help():
 
 def main_backup():
   """ Выполняет резервное копирование """
-  ch = logging.StreamHandler(sys.stdout)
-  level = logging.INFO
-  ch.setLevel(level)
-  #ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-  log.setLevel(level)
-  log.addHandler(ch)
+  logging.basicConfig(level = logging.INFO, \
+                      stream = sys.stdout, \
+                      format = "%(message)s")
   sw = StopWatch("backup")
   command = arg(1)
   if "full" == command:
