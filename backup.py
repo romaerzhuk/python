@@ -251,15 +251,14 @@ class SvnBackup:
       mkdirs(dst)
       oldrev = -1
       md5file = dst + "/.md5"
-      self.md5old = load_md5(md5file)[0]
+      md5 = load_md5(md5file)[0]
       prefix = self.name + os.path.basename(src)
       for name in os.listdir(dst):
         m = self.pattern.match(name)
-        if m != None and m.group(1).startswith(prefix) and name in self.md5old:
-          if self.md5old[name] == md5sum(dst + '/' + name):
+        if m != None and m.group(1).startswith(prefix) and name in md5:
+          if md5[name] == md5sum(dst + '/' + name):
             oldrev = max(oldrev, int(m.group(2)))
-          else:
-            del self.md5old[name]
+            self.md5sums[dst + '/' + name] = md5[name]
       if system("svn info file://%s > %s" % (src, info)) != 0:
         raise IOError("Invalid subversion repository " + src)
       newrev = readrev(info)
@@ -290,7 +289,7 @@ class SvnBackup:
       return
     dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
     path = dst + '/' + dumpname
-    if dumpname in self.md5old and os.path.isfile(path):
+    if dumpname in self.md5sums and os.path.isfile(path):
       return
     if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
               % (oldrev, newrev, src, self.dump)) != 0:
