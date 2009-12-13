@@ -256,9 +256,10 @@ class SvnBackup:
       for name in os.listdir(dst):
         m = self.pattern.match(name)
         if m != None and m.group(1).startswith(prefix) and name in md5:
-          if md5[name] == md5sum(dst + '/' + name):
+          path = dst + '/' + name
+          if md5[name] == md5sum(path):
             oldrev = max(oldrev, int(m.group(2)))
-            self.md5sums[dst + '/' + name] = md5[name]
+            self.md5sums[path] = md5[name]
       if system("svn info file://%s > %s" % (src, info)) != 0:
         raise IOError("Invalid subversion repository " + src)
       newrev = readrev(info)
@@ -289,7 +290,7 @@ class SvnBackup:
       return
     dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
     path = dst + '/' + dumpname
-    if dumpname in self.md5sums and os.path.isfile(path):
+    if path in self.md5sums:
       return
     if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
               % (oldrev, newrev, src, self.dump)) != 0:
