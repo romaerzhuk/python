@@ -186,8 +186,6 @@ class TimeSeparator:
     entry.date = matcher.group(1)
   def separate(self, list):
     """ Сортирует список по времени в обратном порядке, оставляет первые self.num элементов """
-    for e in list:
-      e.date = e.matcher.group()
     list.sort(self.cmp)
     return list[:self.num], list[self.num:]
   def cmp(self, e1, e2):
