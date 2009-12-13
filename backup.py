@@ -2,13 +2,11 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, shutil, platform
+import sys, os, re, time, hashlib, socket, shutil, platform, logging
 
 def through_dirs(path, filter = None):
   """ Рекурсивно сканирует директории. Вызывает для каждой директории процедуру """
-  if filter == None:
-    print path
-  elif filter(path):
+  if filter(path):
     return
   if path == '.': prefix = ''
   else: prefix = path + '/'
@@ -23,7 +21,7 @@ class StopWatch:
     self.msg = msg
     self.start = time.time()
   def stop(self):
-    print "[%s]: %s sec" % (self.msg, time.time() - self.start)
+    log.info("[%s]: %s sec", self.msg, time.time() - self.start)
 
 def md5sum(file):
   """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
@@ -63,7 +61,7 @@ def load_md5(path):
 def mkdirs(path):
   """  Создаёт вложенные директории.
   Если директории уже существуют, ничего не делает """
-  #print "mkdirs(" + path + ")"
+  log.debug("mkdirs(%s)", path)
   if os.path.exists(path):
     return
   mkdirs(os.path.dirname(path))
@@ -83,7 +81,7 @@ def system(command):
 
 def chdir(dir):
   """ Меняет текущую директорию и выводит эхо на стандартный вывод """
-  print "cd", dir
+  log.info("cd %s", dir)
   os.chdir(dir)
 
 def is_subversion(dir):
@@ -104,7 +102,7 @@ def svnVerify(dir):
   """ Проверяет корректность файлов svn-репозиториев """
   if not is_subversion(dir):
     return False
-  print "svn found:", dir
+  log.info("svn found: %s", dir)
   if system("svnadmin verify %s" % dir) != 0:
     raise IOError("Invalid subversion repository " + dir)
   return True
@@ -115,7 +113,7 @@ def bzrVerify(dir):
   if ".bzr" != os.path.basename(dir):
     return False
   bzr = os.path.dirname(dir)
-  print "bzr found:", bzr
+  log.info("bzr found: %s", bzr)
   conf = dir + "/branch/branch.conf"
   if os.path.isfile(conf):
     reParent = re.compile(r"^parent_location\s*=")
@@ -152,7 +150,7 @@ def gitVerify(dir):
   if ".git" != os.path.basename(dir):
     return False
   git = os.path.dirname(dir)
-  print "git found:", git
+  log.info("git found: %s", git)
   chdir(git)
   if os.path.isdir(dir + "/svn"):
     system("git svn fetch")
@@ -222,9 +220,9 @@ class Backup:
         return
       through_dirs(src, repoVerify)
       dst = self.destDirs[0]
-      #print dst, src
+      log.debug("%s, %s", dst, src)
       date = time.strftime("%Y-%m-%d")
-      #print "dst =", os.path.dirname(src)
+      log.debug("dst = %s", os.path.dirname(src))
       chdir(os.path.dirname(src))
       src = os.path.basename(src)
       dir = '/' + self.rootDir + '/' + self.rootDir + '-' + src
@@ -246,12 +244,12 @@ class Backup:
           for key, value in lines.items():
             write_md5(fd, value, key)
     except Exception, e:
-      print "backup error:", e
+      log.error("backup error: %s", e)
   def recoveryDirs(self, key):
     """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
     if key in self.dirSet:
       return
-    #print "recovery dir %1s" % key
+    log.debug("recovery dir %1s", key)
     self.dirSet.add(key)
     list, other = [], []
     fileDict = dict()
@@ -299,12 +297,12 @@ class Backup:
     list.sort()
     recovery = other + list[:self.num]
     remove = list[self.num:]
-    #print " all=%1s\n  recovery=%2s\n  remove=%3s" % (other + list, recovery, remove)
+    log.debug("all=%1s\n  recovery=%2s\n  remove=%3s", other + list, recovery, remove)
     md5files = []
     for f in recovery:
       k = key + '/' + f.name
       if f.dir == None:
-        print "corrupt error: %s" % k
+        log.error("corrupt error: %s", k)
       else:
         md5files.append(f)
         for dst in f.list:
@@ -326,7 +324,7 @@ class Backup:
             if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
               removeFile(path)
       except Exception, e:
-        print "md5sum error:", e
+        log.error("md5sum error: %s", e)
   def removeKey(self, key, destDirs):
     """ Удаляет файл в заданных директориях """
     for dir in destDirs:
@@ -347,7 +345,7 @@ class Backup:
       removeFile(dst)
       shutil.copy(src, dst)
     except Exception, e:
-      print "copy error:", e
+      log.error("copy error: %s", e)
     finally:
       sw.stop()
   def correct(self, dst, path):
@@ -374,7 +372,7 @@ class Backup:
           if stored == real:
             return stored, True
     except Exception, e:
-      print "md5sum check error:", e
+      log.error("md5sum check error: %s", e)
     return None, False
 
 def readrev(file):
@@ -485,7 +483,14 @@ def help():
   print "\tbackup.py svn-dump /var/svn /var/backup"
   sys.exit()
 
-if __name__ == '__main__':
+def main_backup():
+  """ Выполняет резервное копирование """
+  ch = logging.StreamHandler(sys.stdout)
+  level = logging.INFO
+  ch.setLevel(level)
+  #ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+  log.setLevel(level)
+  log.addHandler(ch)
   sw = StopWatch("backup")
   command = arg(1)
   if "full" == command:
@@ -499,3 +504,7 @@ if __name__ == '__main__':
   else:
     help()
   sw.stop()
+
+if __name__ == '__main__':
+  log = logging.getLogger("backup")
+  main_backup()
