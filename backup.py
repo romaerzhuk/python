@@ -41,8 +41,23 @@ def md5sum(file):
 # file - открытый файл
 # md5sum - сумма, в 16-ричном виде 
 # name - имя файла
-def writeMd5(file, md5sum, name):
+def write_md5(file, md5sum, name):
   file.write("%s\t*%s\n" % (md5sum, name))
+
+# Возвращает множество контрольных сумм из файла и время модификации 
+def load_md5(path):
+  pattern = re.compile(r"^(\S+)\s+\*(.+)$")
+  lines = dict()
+  if not os.path.isfile(path):
+    time = -1
+  else:
+    time = os.path.getmtime(path)
+    with open(path, "r") as fd:
+      for line in fd:
+        m = pattern.match(line)
+        if m != None:
+          lines[m.group(2)] = m.group(1).lower()
+  return lines, time
 
 # Создаёт вложенные директории.
 # Если директории уже существуют, ничего не делает
@@ -71,7 +86,7 @@ def chdir(dir):
   os.chdir(dir)
 
 # Проверяет, что директория - репозиторий Subversion
-def isSubversion(dir):
+def is_subversion(dir):
   if not os.path.isdir(dir):
     return False
   svnList = ((1, "conf"), (1, "db"), (1, "hooks"), (1, "locks"), (0, "README.txt"))
@@ -86,7 +101,7 @@ def isSubversion(dir):
 
 # Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
-  if not isSubversion(dir):
+  if not is_subversion(dir):
     return False
   print "svn found:", dir
   if system("svnadmin verify %s" % dir) != 0:
@@ -177,7 +192,6 @@ class RecoveryEntry:
 # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
 class Backup:
   def __init__(self, srcDirs, destDirs, command, suffix, num, rootDir):
-    self.md5Pattern = re.compile(r"^(\S+)\s+\*(.+)$")
     self.removePattern = re.compile(r'\d\d\d\d-\d\d-\d\d')
     self.srcDirs = srcDirs
     self.destDirs = destDirs
@@ -225,11 +239,11 @@ class Backup:
       self.removeKey(key, self.destDirs[1:])
       if saveMd5:
         md5 = dir + "/.md5"
-        lines = self.loadMd5(md5)[0] # контрольные суммы всех файлов директории
+        lines = load_md5(md5)[0] # контрольные суммы всех файлов директории
         lines[name] = self.md5sums[path]
         with open(md5, "wb") as fd:
           for key, value in lines.items():
-            writeMd5(fd, value, key)
+            write_md5(fd, value, key)
     except Exception, e:
       print "backup error:", e
   # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий 
@@ -305,7 +319,7 @@ class Backup:
         removeFile(name)
         with open(name, "wb") as fd:
           for f in md5files:
-            writeMd5(fd, f.md5[dst], f.name)
+            write_md5(fd, f.md5[dst], f.name)
           for name in os.listdir(dir):
             path = dir + '/' + name
             if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
@@ -346,11 +360,11 @@ class Backup:
           lines = self.md5cache[1]
           time = self.md5cache[2]
         else:
-          lines, time = self.loadMd5(dir + ".md5") # контрольные суммы всех файлов директории
+          lines, time = load_md5(dir + ".md5") # контрольные суммы всех файлов директории
           self.md5cache = (dir, lines, time)
         stored = lines.get(name)
         if stored == None:
-          lines, time = self.loadMd5(dir + name + ".md5") # устаревший файл
+          lines, time = load_md5(dir + name + ".md5") # устаревший файл
           stored = lines.get(name)
         if stored != None:
           if dst != self.destDirs[0] and self.checked < time:
@@ -361,19 +375,6 @@ class Backup:
     except Exception, e:
       print "md5sum check error:", e
     return None, False
-  # Возвращает множество контрольных сумм из файла и время модификации 
-  def loadMd5(self, path):
-    lines = dict()
-    if not os.path.isfile(path):
-      time = -1
-    else:
-      time = os.path.getmtime(path)
-      with open(path, "r") as fd:
-        for line in fd:
-          m = self.md5Pattern.match(line)
-          if m != None:
-            lines[m.group(2)] = m.group(1).lower()
-    return lines, time
 
 # Читает номер ревизии Subversion из файла
 def readrev(file):
@@ -387,40 +388,72 @@ def readrev(file):
 # Запускает svnadmin dump для репозиториев
 class SvnDump:
   def __init__(self, src, dst, hostname):
-    self.dst = dst + '/' + hostname + '/' + hostname + '-' + os.path.basename(src) + '/'
+    self.name = hostname + '-' + os.path.basename(src)
+    self.dst = dst + '/' + hostname + '/' + self.name + '/'
+    self.name += '-'
     self.lenght = len(src) + 1
     self.pattern = re.compile(r"^(.+)\.\d+-(\d+)\.svndmp\.gz$")
-    through_dirs(src, self.dump)
-  def dump(self, dir):
-    if not isSubversion(dir):
+    through_dirs(src, self.svn_backup)
+  def svn_backup(self, src):
+    if not is_subversion(src):
       return False
-    dst = self.dst + dir[self.lenght:]
+    dst = self.dst + self.name + src[self.lenght:]
     info = dst + "/.info"
-    dump = dst + "/.dump"
+    self.dump = dst + "/.dump"
     try:
       mkdirs(dst)
-      oldrev = 0
-      name = os.path.basename(dir)
-      for f in os.listdir(dst):
-        m = self.pattern.match(f)
-        if m != None and m.group(1).startswith(name):
-          oldrev = max(oldrev, int(m.group(2)))
-      if system("svn info file://%s > %s" % (dir, info)) != 0:
-        raise IOError("Invalid subversion repository " + dir)
+      oldrev = -1
+      md5file = dst + "/.md5"
+      self.md5 = load_md5(md5file)[0]
+      prefix = self.name + os.path.basename(src)
+      for name in os.listdir(dst):
+        m = self.pattern.match(name)
+        if m != None and m.group(1).startswith(prefix) and name in self.md5:
+          if self.md5[name] == md5sum(dst + '/' + name):
+            oldrev = max(oldrev, int(m.group(2)))
+          else:
+            del self.md5[name]
+      if system("svn info file://%s > %s" % (src, info)) != 0:
+        raise IOError("Invalid subversion repository " + src)
       newrev = readrev(info)
-      if newrev != oldrev:
-        oldrev = oldrev + 1
-        if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
-                  % (oldrev, newrev, dir, dump)) != 0:
-          raise IOError("Invalid subversion dumping")
-        dumpname = "%s.%06d-%06d.svndmp.gz" % (name, oldrev, newrev)
-        with open(dst + "/.md5", "a+b") as fd:
-            writeMd5(fd, md5sum(dump), dumpname)
-        os.rename(dump, dst + '/' + dumpname)
+      if newrev == oldrev:
+        return True
+      minrev = 100
+      if newrev >= minrev - 1:
+        maxrev = minrev
+        while newrev >= maxrev * 10 - 1:
+          maxrev *= 10
+        oldrev = -1
+        step = maxrev
+        while step >= minrev:
+          rev = oldrev + step
+          self.svn_dump(src, dst, prefix, oldrev, rev)
+          oldrev = rev
+          if oldrev + step > newrev:
+            step /= 10
+        if newrev == maxrev:
+          return True
+      self.svn_dump(src, dst, prefix, oldrev, newrev)
+      with open(md5file, "wb") as fd:
+        keys = list(self.md5.keys())
+        keys.sort()
+        for key in keys:
+          write_md5(fd, self.md5[key], key)
       return True
     finally:
       removeFile(info)
-      removeFile(dump)
+      removeFile(self.dump)
+  def svn_dump(self, src, dst, prefix, oldrev, newrev):
+    oldrev += 1
+    dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
+    name = dst + '/' + dumpname
+    if dumpname in self.md5 and os.path.isfile(name):
+      return
+    if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
+              % (oldrev, newrev, src, self.dump)) != 0:
+      raise IOError("Invalid subversion dumping")
+    self.md5[dumpname] = md5sum(self.dump)
+    os.rename(self.dump, name)
 
 # Возвращает sys.argv[index] или имя машины 
 def hostname(index):
