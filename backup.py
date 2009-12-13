@@ -296,6 +296,7 @@ class SvnBackup:
               % (oldrev, newrev, src, self.dump)) != 0:
       raise IOError("Invalid subversion dumping")
     self.md5sums[path] = md5sum(self.dump)
+    removeFile(path)
     os.rename(self.dump, path)
 
 class Backup:
