@@ -423,16 +423,14 @@ class SvnDump:
         maxrev = minrev
         while newrev >= maxrev * 10 - 1:
           maxrev *= 10
-        oldrev = -1
+        rev = -1
         step = maxrev
         while step >= minrev:
-          rev = oldrev + step
-          self.svn_dump(src, dst, prefix, oldrev, rev)
-          oldrev = rev
-          if oldrev + step > newrev:
+          self.svn_dump(src, dst, prefix, rev, rev + step)
+          rev = rev + step
+          if rev + step > newrev:
             step /= 10
-        if newrev == maxrev:
-          return True
+        oldrev = max(oldrev, rev)
       self.svn_dump(src, dst, prefix, oldrev, newrev)
       with open(md5file, "wb") as fd:
         keys = list(self.md5.keys())
@@ -445,6 +443,8 @@ class SvnDump:
       removeFile(self.dump)
   def svn_dump(self, src, dst, prefix, oldrev, newrev):
     oldrev += 1
+    if oldrev > newrev:
+      return
     dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
     name = dst + '/' + dumpname
     if dumpname in self.md5 and os.path.isfile(name):
