@@ -314,14 +314,12 @@ class Backup:
     self.checked = time.time() - 2 * 24 * 3600
   def full(self):
     """ Архивирует исходные файлы и клонирует копии в несколько источников """
-    self.dump(True)
+    self.dump()
     self.clone()
-  def dump(self, skip_md5 = False):
-    """ Архивирует исходные файлы. В случае, если skip_md5 == False, пишет контрольные суммы на диск """
+  def dump(self):
+    """ Архивирует исходные файлы """
     for src in self.srcDirs:
       self.backup(src)
-    if skip_md5:
-      return
     dirs = dict()
     for path in self.md5sums.keys():
       md5path = os.path.dirname(path) + "/.md5"
