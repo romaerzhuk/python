@@ -275,7 +275,7 @@ class SvnBackup:
         while step >= minrev:
           self.svn_dump(src, dst, prefix, rev, rev + step)
           rev = rev + step
-          if rev + step > newrev:
+          while rev + step > newrev:
             step /= 10
         oldrev = max(oldrev, rev)
       self.svn_dump(src, dst, prefix, oldrev, newrev)
