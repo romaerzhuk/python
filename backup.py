@@ -4,8 +4,9 @@
 from __future__ import with_statement
 import sys, os, re, time, hashlib, socket, shutil, platform, logging
 
-def through_dirs(path, filter = None):
-  """ Рекурсивно сканирует директории. Вызывает для каждой директории процедуру """
+def through_dirs(path, filter):
+  """ Рекурсивно сканирует директории.
+  Вызывает для каждой директории фильтр. """
   if filter(path):
     return
   if path == '.': prefix = ''
@@ -37,9 +38,9 @@ def md5sum(file):
 
 def write_md5(file, md5sum, name):
   """  Пишет в открытый файл контрольную сумму
-  file - открытый файл
+  file   - открытый файл
   md5sum - сумма, в 16-ричном виде 
-  name - имя файла
+  name   - имя файла
   """
   file.write("%s\t*%s\n" % (md5sum, name))
 
@@ -98,15 +99,6 @@ def is_subversion(dir):
     return False
   return True
 
-def svnVerify(dir):
-  """ Проверяет корректность файлов svn-репозиториев """
-  if not is_subversion(dir):
-    return False
-  log.info("svn found: %s", dir)
-  if system("svnadmin verify %s" % dir) != 0:
-    raise IOError("Invalid subversion repository " + dir)
-  return True
-
 def bzrVerify(dir):
   """  Проверяет корректность файлов bzr-репозиториев
   Обновляет, перепаковывает """
@@ -161,97 +153,243 @@ def gitVerify(dir):
     raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
   return True
 
-def repoVerify(dir):
-  """  Создаёт резервные копии файла
-  Проверяет корректность репозиториев """
-  return svnVerify(dir) or bzrVerify(dir) or gitVerify(dir)
-
 def removeFile(path):
-  """ Удаляет файл """
+  """ Удаляет файл, если он существует """
   if os.path.isfile(path):
     os.remove(path)
+
+class RepoVerify:
+  """ Проверяет корректность репозиториев """
+  def __init__(self):
+    self.svn = False
+  def __call__(self, dir):
+    self.svn = is_subversion(dir)
+    return self.svn or bzrVerify(dir) or gitVerify(dir)
 
 class RecoveryEntry:
   """ Файл, подготовленный к восстановлению """
   def __init__(self, name):
-    self.name = name  # имя файла
-    self.md5 = dict() # контрольная сумма файла в соответствущей директории
-    self.dir = None   # имя директории с корректным файлом
-    self.list = []    # список директорий, куда нужно восстанавливать файл
-  def __cmp__(self, entry):
-    if self.dir != None:
-      if entry.dir == None:
-        return - 1
-    elif entry.dir != None:
-      return 1
-    return ((entry.date >= self.date) << 1) - 1
+    self.name = name       # имя файла
+    self.md5 = dict()      # контрольная сумма файла в соответствущей директории
+    self.dir = None        # имя директории с корректным файлом
+    self.list = []         # список директорий, куда нужно восстанавливать файл
   def __repr__(self):
-    return 'name=%s, dir=%s, list=%s]' % (self.name, self.dir, self.list)
+    return "Entry(name=%s, dir=%s, list=%s)" % (self.name, self.dir, self.list)
+
+class TimeSeparator:
+  """ Отделяет нужные копии от избыточных по дате создания """
+  def __init__(self, num):
+    self.num = num
+    self.pattern = re.compile(r"^.+(\d\d\d\d-\d\d-\d\d)\..+$")
+  def init(self, entry, matcher):
+    """ Инициализирует Entry """
+    entry.date = matcher.group(1)
+  def separate(self, list):
+    """ Сортирует список по времени в обратном порядке, оставляет первые self.num элементов """
+    for e in list:
+      e.date = e.matcher.group()
+    list.sort(self.cmp)
+    return list[:self.num], list[self.num:]
+  def cmp(self, e1, e2):
+    """ Сравнивает файлы по дате: e1.date <= e2.date """
+    if e1.dir != None:
+      if e2.dir == None:
+        return - 1
+    elif e2.dir != None:
+      return 1
+    return ((e1.date <= e2.date) << 1) - 1
+
+class SvnSeparator:
+  """ Отделяет ненужные копии с перекрывающимися диапазонами ревизий svn """
+  def __init__(self):
+    self.pattern = re.compile(r"^(.+)\.(\d+)-(\d+)\.svndmp\.gz$")
+  def init(self, entry, matcher):
+    """ Инициализирует Entry """
+    entry.recovery = True
+    entry.start = int(matcher.group(2))
+    entry.stop = int(matcher.group(3))
+  def separate(self, list):
+    """ Разделяет перекрывающиеся диапазоны ревизий """
+    list.sort(self.cmp)
+    recovery, remove = [], []
+    for i in xrange(len(list)):
+      ei = list[i]
+      if ei.recovery:
+        recovery.append(ei)
+        if ei.dir != None:
+          for j in xrange(i + 1, len(list)):
+            ej = list[j]
+            if ej.recovery and ei.stop >= ej.stop:
+              ej.recovery = False
+              remove.append(ej)
+            elif ei.stop < ej.start:
+              break
+    return recovery, remove
+  def cmp(self, e1, e2):
+    """ Сортирует по ревизиям """
+    cmp = e1.start - e2.start
+    if cmp != 0:
+      return cmp
+    return e2.stop - e1.stop
+
+class SvnBackup:
+  """ Запускает svnadmin dump для репозиториев Subversion
+  Сохраняет в self.md5sums подсчитанные контрольные суммы """
+  def __init__(self, src, dst, hostname, md5sums):
+    self.name = hostname + '-' + os.path.basename(src)
+    self.dst = dst + '/' + hostname + '/' + self.name + '/'
+    self.name += '-'
+    self.md5sums = md5sums
+    self.lenght = len(src) + 1
+    self.pattern = re.compile(r"^(.+)\.\d+-(\d+)\.svndmp\.gz$")
+  def backup(self, src):
+    """ Снимает резервную копию для одиночного репозитория """
+    if not is_subversion(src):
+      return False
+    dst = self.dst + self.name + src[self.lenght:]
+    info = dst + "/.info"
+    self.dump = dst + "/.dump"
+    try:
+      mkdirs(dst)
+      oldrev = -1
+      md5file = dst + "/.md5"
+      self.md5old = load_md5(md5file)[0]
+      prefix = self.name + os.path.basename(src)
+      for name in os.listdir(dst):
+        m = self.pattern.match(name)
+        if m != None and m.group(1).startswith(prefix) and name in self.md5old:
+          if self.md5old[name] == md5sum(dst + '/' + name):
+            oldrev = max(oldrev, int(m.group(2)))
+          else:
+            del self.md5old[name]
+      if system("svn info file://%s > %s" % (src, info)) != 0:
+        raise IOError("Invalid subversion repository " + src)
+      newrev = readrev(info)
+      if newrev == oldrev:
+        return True
+      minrev = 100
+      if newrev >= minrev - 1:
+        maxrev = minrev
+        while newrev >= maxrev * 10 - 1:
+          maxrev *= 10
+        rev = -1
+        step = maxrev
+        while step >= minrev:
+          self.svn_dump(src, dst, prefix, rev, rev + step)
+          rev = rev + step
+          if rev + step > newrev:
+            step /= 10
+        oldrev = max(oldrev, rev)
+      self.svn_dump(src, dst, prefix, oldrev, newrev)
+      return True
+    finally:
+      removeFile(info)
+      removeFile(self.dump)
+  def svn_dump(self, src, dst, prefix, oldrev, newrev):
+    """ Запускает svnadmin dump для одиночного репозитория """
+    oldrev += 1
+    if oldrev > newrev:
+      return
+    dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
+    path = dst + '/' + dumpname
+    if dumpname in self.md5old and os.path.isfile(path):
+      return
+    if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
+              % (oldrev, newrev, src, self.dump)) != 0:
+      raise IOError("Invalid subversion dumping")
+    self.md5sums[path] = md5sum(self.dump)
+    os.rename(self.dump, path)
 
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
-  def __init__(self, srcDirs, destDirs, command, suffix, num, rootDir):
-    self.removePattern = re.compile(r'\d\d\d\d-\d\d-\d\d')
+  def __init__(self, srcDirs, destDirs, command, suffix, num, hostname):
+    # набор способов разделить нужные копии от избыточных
+    self.separators = (TimeSeparator(num), SvnSeparator())
     self.srcDirs = srcDirs
     self.destDirs = destDirs
     self.command = command
     self.suffix = suffix
-    self.num = num
-    self.rootDir = rootDir
+    self.hostname = hostname
     self.dirSet = set()
     self.md5sums = dict()
     self.md5cache = (None, None)
     self.checked = time.time() - 2 * 24 * 3600
   def full(self):
     """ Архивирует исходные файлы и клонирует копии в несколько источников """
-    self.dump(False)
+    self.dump(True)
     self.clone()
-  def dump(self, saveMd5 = True):
-    """ Архивирует исходные файлы """
+  def dump(self, skip_md5 = False):
+    """ Архивирует исходные файлы. В случае, если skip_md5 == False, пишет контрольные суммы на диск """
     for src in self.srcDirs:
-      self.backup(src, saveMd5)
+      self.backup(src)
+    if skip_md5:
+      return
+    dirs = dict()
+    for path in self.md5sums.keys():
+      md5path = os.path.dirname(path) + "/.md5"
+      lst = dirs.get(md5path)
+      if lst == None:
+        lst = dirs[md5path] = []
+      lst.append(path)
+    for md5path, lst in dirs.items():
+      md5 = load_md5(md5path)[0]
+      for path in lst:
+        name = os.path.basename(path)
+        md5[name] = self.md5sums[path]
+      with open(md5path, "wb") as fd:
+        names = list(md5.keys())
+        names.sort()
+        for name in names:
+          write_md5(fd, md5[name], name)
   def clone(self):
     """ Клонирует копии в несколько источников """
     self.recoveryDirs("")
-  def backup(self, src, saveMd5):
-    """ Создаёт резервные копии файла """
+  def backup(self, src):
+    """ Создаёт резервные копии директории """
     try:
       if "" == src:
         return
-      through_dirs(src, repoVerify)
+      self.subversion = False
+      through_dirs(src, self.repoVerify)
       dst = self.destDirs[0]
-      log.debug("%s, %s", dst, src)
-      date = time.strftime("%Y-%m-%d")
-      log.debug("dst = %s", os.path.dirname(src))
-      chdir(os.path.dirname(src))
-      src = os.path.basename(src)
-      dir = '/' + self.rootDir + '/' + self.rootDir + '-' + src
-      name = self.rootDir + '-' + src + date + '.' + self.suffix
-      key = dir + '/' + name
-      dir = dst + dir
-      mkdirs(dir)
-      path = dst + key
-      command = self.command % (os.path.normpath(path), src)
-      self.removePair(path)
-      system(command)
-      self.md5sums[path] = md5sum(path)
-      self.removeKey(key, self.destDirs[1:])
-      if saveMd5:
-        md5 = dir + "/.md5"
-        lines = load_md5(md5)[0] # контрольные суммы всех файлов директории
-        lines[name] = self.md5sums[path]
-        with open(md5, "wb") as fd:
-          for key, value in lines.items():
-            write_md5(fd, value, key)
+      if self.subversion:
+        svn = SvnBackup(src, dst, self.hostname, self.md5sums)
+        through_dirs(src, svn.backup)
+      else:
+        self.generic_backup(src, dst)
     except Exception, e:
       log.error("backup error: %s", e)
+  def repoVerify(self, dir):
+    """ Проверяет корректность репозиториев.
+    Устанавливает self.subversion, если обнаруживает репозиторий Subversion-а"""
+    self.subversion = self.subversion or is_subversion(dir)
+    return self.subversion or bzrVerify(dir) or gitVerify(dir)
+  def generic_backup(self, src, dst):
+    """ Полностью архивирует директорию """
+    log.debug("generic_backup(%s, %s)", src, dst)
+    date = time.strftime("%Y-%m-%d")
+    log.debug("dst = %s", os.path.dirname(src))
+    chdir(os.path.dirname(src))
+    src = os.path.basename(src)
+    dir = '/' + self.hostname + '/' + self.hostname + '-' + src
+    name = self.hostname + '-' + src + date + '.' + self.suffix
+    key = dir + '/' + name
+    dir = dst + dir
+    mkdirs(dir)
+    path = dst + key
+    command = self.command % (os.path.normpath(path), src)
+    self.removePair(path)
+    system(command)
+    self.md5sums[path] = md5sum(path)
+    self.removeKey(key, self.destDirs[1:])
   def recoveryDirs(self, key):
-    """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+    """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
+    Удаляет устаревшие копии """
     if key in self.dirSet:
       return
     log.debug("recovery dir %1s", key)
     self.dirSet.add(key)
-    list, other = [], []
+    lists, recovery, remove = ([], []), [], []
     fileDict = dict()
     md5dirs = set()
     for dst in self.destDirs:
@@ -268,13 +406,17 @@ class Backup:
             if name != ".md5":
               md5dirs.add(dst)
           elif not name in fileDict:
-            fileDict[name] = entry = RecoveryEntry(name)
-            matcher = self.removePattern.search(name)
-            if matcher == None:
-              other.append(entry)
-            else:
-              list.append(entry)
-              entry.date = matcher.group(0)
+            entry = None
+            for i in xrange(len(self.separators)):
+              separator = self.separators[i]
+              matcher = separator.pattern.match(name)
+              if matcher != None:
+                fileDict[name] = entry = RecoveryEntry(name)
+                separator.init(entry, matcher)
+                lists[i].append(entry)
+                break
+            if entry == None:
+              recovery.append(entry)
     if len(fileDict) == 0:
       return
     for (name, entry) in fileDict.items():
@@ -294,10 +436,11 @@ class Backup:
           if entry.dir == None:
             entry.dir = dst
           entry.md5[dst] = md5
-    list.sort()
-    recovery = other + list[:self.num]
-    remove = list[self.num:]
-    log.debug("all=%1s\n  recovery=%2s\n  remove=%3s", other + list, recovery, remove)
+    for i in xrange(len(self.separators)):
+      rec, old = self.separators[i].separate(lists[i])
+      recovery += rec
+      remove += old
+    log.debug("all=%s\n  recovery=%s\n  remove=%s", recovery + remove, recovery, remove)
     md5files = []
     for f in recovery:
       k = key + '/' + f.name
@@ -324,7 +467,7 @@ class Backup:
             if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
               removeFile(path)
       except Exception, e:
-        log.error("md5sum error: %s", e)
+        log.error("md5sums error: %s", e)
   def removeKey(self, key, destDirs):
     """ Удаляет файл в заданных директориях """
     for dir in destDirs:
@@ -372,7 +515,7 @@ class Backup:
           if stored == real:
             return stored, True
     except Exception, e:
-      log.error("md5sum check error: %s", e)
+      log.error("md5sums check error: %s", e)
     return None, False
 
 def readrev(file):
@@ -383,78 +526,6 @@ def readrev(file):
       if line.startswith(prefix):
         return int(line[len(prefix):])
   raise IOError("Invalid subversion info " + file)
-
-class SvnDump:
-  """ Запускает svnadmin dump для репозиториев Subversion """
-  def __init__(self, src, dst, hostname):
-    self.name = hostname + '-' + os.path.basename(src)
-    self.dst = dst + '/' + hostname + '/' + self.name + '/'
-    self.name += '-'
-    self.lenght = len(src) + 1
-    self.pattern = re.compile(r"^(.+)\.\d+-(\d+)\.svndmp\.gz$")
-    through_dirs(src, self.svn_backup)
-  def svn_backup(self, src):
-    """ Снимает резервную копию для одиночного репозитория """
-    if not is_subversion(src):
-      return False
-    dst = self.dst + self.name + src[self.lenght:]
-    info = dst + "/.info"
-    self.dump = dst + "/.dump"
-    try:
-      mkdirs(dst)
-      oldrev = -1
-      md5file = dst + "/.md5"
-      self.md5 = load_md5(md5file)[0]
-      prefix = self.name + os.path.basename(src)
-      for name in os.listdir(dst):
-        m = self.pattern.match(name)
-        if m != None and m.group(1).startswith(prefix) and name in self.md5:
-          if self.md5[name] == md5sum(dst + '/' + name):
-            oldrev = max(oldrev, int(m.group(2)))
-          else:
-            del self.md5[name]
-      if system("svn info file://%s > %s" % (src, info)) != 0:
-        raise IOError("Invalid subversion repository " + src)
-      newrev = readrev(info)
-      if newrev == oldrev:
-        return True
-      minrev = 100
-      if newrev >= minrev - 1:
-        maxrev = minrev
-        while newrev >= maxrev * 10 - 1:
-          maxrev *= 10
-        rev = -1
-        step = maxrev
-        while step >= minrev:
-          self.svn_dump(src, dst, prefix, rev, rev + step)
-          rev = rev + step
-          if rev + step > newrev:
-            step /= 10
-        oldrev = max(oldrev, rev)
-      self.svn_dump(src, dst, prefix, oldrev, newrev)
-      with open(md5file, "wb") as fd:
-        keys = list(self.md5.keys())
-        keys.sort()
-        for key in keys:
-          write_md5(fd, self.md5[key], key)
-      return True
-    finally:
-      removeFile(info)
-      removeFile(self.dump)
-  def svn_dump(self, src, dst, prefix, oldrev, newrev):
-    """ Запускает svnadmin dump для одиночного репозитория """
-    oldrev += 1
-    if oldrev > newrev:
-      return
-    dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
-    name = dst + '/' + dumpname
-    if dumpname in self.md5 and os.path.isfile(name):
-      return
-    if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
-              % (oldrev, newrev, src, self.dump)) != 0:
-      raise IOError("Invalid subversion dumping")
-    self.md5[dumpname] = md5sum(self.dump)
-    os.rename(self.dump, name)
 
 def hostname(index):
   """ Возвращает sys.argv[index] или имя машины """
@@ -472,15 +543,13 @@ def help():
   """ Выводит справку об использовании """
   print "Usage: backup.py command [options]"
   print "\ncommands:"
-  print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [rootDir] -- dumps, clones and checks md5 sums"
-  print "\tdump srcDirs destDirs archivingCommand fileSufix [rootDir] -- dumps source directories and writes md5 check sums"
-  print "\tsvn-dump srcDir destDir [rootDir] -- dumps svn directories and writes md5 check sums"
+  print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [hostname] -- dumps, clones and checks md5 sums"
+  print "\tdump srcDirs destDirs archivingCommand fileSufix [hostname] -- dumps source directories and writes md5 check sums"
   print "\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files"
   print "\nExamples:"
   print "\tbackup.py full $HOME/src /local/backup,/remote/backup 'tar czf %s %s' tar.gz 3"
   print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup '7z a %s %s' 7z myhost"
   print "\tbackup.py clone /local/backup,/remote/backup2 5"
-  print "\tbackup.py svn-dump /var/svn /var/backup"
   sys.exit()
 
 def main_backup():
@@ -496,8 +565,6 @@ def main_backup():
     Backup(arg(2).split(","), arg(3).split(","), arg(4), arg(5), None, hostname(6)).dump()
   elif "clone" == command:
     Backup([], arg(2).split(","), None, None, int(arg(3)), None).clone()
-  elif "svn-dump" == command:
-    SvnDump(arg(2), arg(3), hostname(4))
   else:
     help()
   sw.stop()
