@@ -4,8 +4,8 @@
 from __future__ import with_statement
 import sys, os, re, time, hashlib, socket, shutil, platform
 
-# Рекурсивно сканирует директорию. Вызывает для каждой директории процедуру
 def through_dirs(path, filter = None):
+  """ Рекурсивно сканирует директории. Вызывает для каждой директории процедуру """
   if filter == None:
     print path
   elif filter(path):
@@ -17,16 +17,16 @@ def through_dirs(path, filter = None):
     if os.path.isdir(s):
       through_dirs(s, filter)
 
-# Засекает время выполнения команды
 class StopWatch:
+  """ Засекает время выполнения команды """
   def __init__(self, msg):
     self.msg = msg
     self.start = time.time()
   def stop(self):
     print "[%s]: %s sec" % (self.msg, time.time() - self.start)
 
-# Вычисляет контрольную сумму файла в шестнадцатиричном виде
 def md5sum(file):
+  """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
   sw = StopWatch("md5sum -b %s" % file)
   with open(file, "rb") as fd:
     sum = hashlib.md5()
@@ -37,15 +37,16 @@ def md5sum(file):
         return sum.hexdigest().lower()
       sum.update(buf)
 
-# Пишет в открытый файл контрольную сумму
-# file - открытый файл
-# md5sum - сумма, в 16-ричном виде 
-# name - имя файла
 def write_md5(file, md5sum, name):
+  """  Пишет в открытый файл контрольную сумму
+  file - открытый файл
+  md5sum - сумма, в 16-ричном виде 
+  name - имя файла
+  """
   file.write("%s\t*%s\n" % (md5sum, name))
 
-# Возвращает множество контрольных сумм из файла и время модификации 
 def load_md5(path):
+  """ Возвращает множество контрольных сумм из файла и время модификации (dict, time) """
   pattern = re.compile(r"^(\S+)\s+\*(.+)$")
   lines = dict()
   if not os.path.isfile(path):
@@ -59,34 +60,34 @@ def load_md5(path):
           lines[m.group(2)] = m.group(1).lower()
   return lines, time
 
-# Создаёт вложенные директории.
-# Если директории уже существуют, ничего не делает
 def mkdirs(path):
+  """  Создаёт вложенные директории.
+  Если директории уже существуют, ничего не делает """
   #print "mkdirs(" + path + ")"
   if os.path.exists(path):
     return
   mkdirs(os.path.dirname(path))
   os.mkdir(path)
 
-# Читает первую строку из файла
 def readline(file):
+  """ Возвращает первую строку из файла """
   with open(file, "r") as fd:
     return fd.readline()
 
-# Вызывает системную команду и выводит эхо на стандартный вывод
 def system(command):
+  """ Вызывает системную команду и выводит эхо на стандартный вывод """
   sw = StopWatch(command)
   res = os.system(command)
   sw.stop()
   return res
 
-# Меняет текущую директорию и выводит эхо на стандартный вывод
 def chdir(dir):
+  """ Меняет текущую директорию и выводит эхо на стандартный вывод """
   print "cd", dir
   os.chdir(dir)
 
-# Проверяет, что директория - репозиторий Subversion
 def is_subversion(dir):
+  """ Проверяет, что директория - репозиторий Subversion """
   if not os.path.isdir(dir):
     return False
   svnList = ((1, "conf"), (1, "db"), (1, "hooks"), (1, "locks"), (0, "README.txt"))
@@ -99,8 +100,8 @@ def is_subversion(dir):
     return False
   return True
 
-# Проверяет корректность файлов svn-репозиториев
 def svnVerify(dir):
+  """ Проверяет корректность файлов svn-репозиториев """
   if not is_subversion(dir):
     return False
   print "svn found:", dir
@@ -108,9 +109,9 @@ def svnVerify(dir):
     raise IOError("Invalid subversion repository " + dir)
   return True
 
-# Проверяет корректность файлов bzr-репозиториев
-# Обновляет, перепаковывает
 def bzrVerify(dir):
+  """  Проверяет корректность файлов bzr-репозиториев
+  Обновляет, перепаковывает """
   if ".bzr" != os.path.basename(dir):
     return False
   bzr = os.path.dirname(dir)
@@ -145,9 +146,9 @@ def bzrVerify(dir):
       os.remove(dir + '/' + file)
   return True
 
-# Проверяет корректность файлов git-репозиториев
-# Обновляет из svn, перепаковывает
 def gitVerify(dir):
+  """  Проверяет корректность файлов git-репозиториев
+  Обновляет из svn, перепаковывает """
   if ".git" != os.path.basename(dir):
     return False
   git = os.path.dirname(dir)
@@ -162,18 +163,18 @@ def gitVerify(dir):
     raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
   return True
 
-# Создаёт резервные копии файла
-# Проверяет корректность репозиториев
 def repoVerify(dir):
+  """  Создаёт резервные копии файла
+  Проверяет корректность репозиториев """
   return svnVerify(dir) or bzrVerify(dir) or gitVerify(dir)
 
-# Удаляет файл
 def removeFile(path):
+  """ Удаляет файл """
   if os.path.isfile(path):
     os.remove(path)
 
-# Файл, подготовленный к восстановлению
 class RecoveryEntry:
+  """ Файл, подготовленный к восстановлению """
   def __init__(self, name):
     self.name = name  # имя файла
     self.md5 = dict() # контрольная сумма файла в соответствущей директории
@@ -189,8 +190,8 @@ class RecoveryEntry:
   def __repr__(self):
     return 'name=%s, dir=%s, list=%s]' % (self.name, self.dir, self.list)
 
-# Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
 class Backup:
+  """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
   def __init__(self, srcDirs, destDirs, command, suffix, num, rootDir):
     self.removePattern = re.compile(r'\d\d\d\d-\d\d-\d\d')
     self.srcDirs = srcDirs
@@ -203,19 +204,19 @@ class Backup:
     self.md5sums = dict()
     self.md5cache = (None, None)
     self.checked = time.time() - 2 * 24 * 3600
-  # Архивирует исходные файлы и клонирует копии в несколько источников
   def full(self):
+    """ Архивирует исходные файлы и клонирует копии в несколько источников """
     self.dump(False)
     self.clone()
-  # Архивирует исходные файлы
   def dump(self, saveMd5 = True):
+    """ Архивирует исходные файлы """
     for src in self.srcDirs:
       self.backup(src, saveMd5)
-  # Клонирует копии в несколько источников
   def clone(self):
+    """ Клонирует копии в несколько источников """
     self.recoveryDirs("")
-  # Создаёт резервные копии файла
   def backup(self, src, saveMd5):
+    """ Создаёт резервные копии файла """
     try:
       if "" == src:
         return
@@ -246,8 +247,8 @@ class Backup:
             write_md5(fd, value, key)
     except Exception, e:
       print "backup error:", e
-  # Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий 
   def recoveryDirs(self, key):
+    """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
     if key in self.dirSet:
       return
     #print "recovery dir %1s" % key
@@ -326,20 +327,20 @@ class Backup:
               removeFile(path)
       except Exception, e:
         print "md5sum error:", e
-  # Удаляет файл в заданных директориях
   def removeKey(self, key, destDirs):
+    """ Удаляет файл в заданных директориях """
     for dir in destDirs:
       path = dir + key
       self.removePair(path)
-  # Удаляет файл и контрольную сумму
   def removePair(self, path):
+    """ Удаляет файл и контрольную сумму """
     if os.path.isfile(path):
       sw = StopWatch("rm %1s" % path)
       removeFile(path)
       sw.stop()
     removeFile(path + ".md5") # устаревший файл
-  # Копирует файл
   def copy(self, src, dst):
+    """ Копирует файл """
     sw = StopWatch("cp %s %s" % (src, dst))
     try:
       mkdirs(os.path.dirname(dst))
@@ -349,9 +350,9 @@ class Backup:
       print "copy error:", e
     finally:
       sw.stop()
-  # Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
-  # и флаг, что сумма была вычислена, а не взята из файла 
   def correct(self, dst, path):
+    """ Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
+       и флаг, что сумма была вычислена, а не взята из файла """
     try:
       if os.path.isfile(path):
         dir = os.path.dirname(path) + '/'
@@ -376,8 +377,8 @@ class Backup:
       print "md5sum check error:", e
     return None, False
 
-# Читает номер ревизии Subversion из файла
 def readrev(file):
+  """ Читает номер ревизии Subversion из файла """
   prefix = "Revision: "
   with open(file, "r") as f:
     for line in f:
@@ -385,8 +386,8 @@ def readrev(file):
         return int(line[len(prefix):])
   raise IOError("Invalid subversion info " + file)
 
-# Запускает svnadmin dump для репозиториев
 class SvnDump:
+  """ Запускает svnadmin dump для репозиториев Subversion """
   def __init__(self, src, dst, hostname):
     self.name = hostname + '-' + os.path.basename(src)
     self.dst = dst + '/' + hostname + '/' + self.name + '/'
@@ -395,6 +396,7 @@ class SvnDump:
     self.pattern = re.compile(r"^(.+)\.\d+-(\d+)\.svndmp\.gz$")
     through_dirs(src, self.svn_backup)
   def svn_backup(self, src):
+    """ Снимает резервную копию для одиночного репозитория """
     if not is_subversion(src):
       return False
     dst = self.dst + self.name + src[self.lenght:]
@@ -442,6 +444,7 @@ class SvnDump:
       removeFile(info)
       removeFile(self.dump)
   def svn_dump(self, src, dst, prefix, oldrev, newrev):
+    """ Запускает svnadmin dump для одиночного репозитория """
     oldrev += 1
     if oldrev > newrev:
       return
@@ -455,20 +458,20 @@ class SvnDump:
     self.md5[dumpname] = md5sum(self.dump)
     os.rename(self.dump, name)
 
-# Возвращает sys.argv[index] или имя машины 
 def hostname(index):
+  """ Возвращает sys.argv[index] или имя машины """
   if len(sys.argv) > index:
     return sys.argv[index]
   return socket.gethostname()
 
-# Возвращает sys.arg[index], или выводит справку и завершает работу
 def arg(index):
+  """ Возвращает sys.arg[index], или выводит справку и завершает работу """
   if len(sys.argv) > index:
     return sys.argv[index]
   help()
 
-# Выводит справку об использовании
 def help():
+  """ Выводит справку об использовании """
   print "Usage: backup.py command [options]"
   print "\ncommands:"
   print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [rootDir] -- dumps, clones and checks md5 sums"
