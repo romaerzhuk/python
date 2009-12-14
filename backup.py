@@ -235,24 +235,25 @@ class SvnBackup:
   Сохраняет в self.md5sums подсчитанные контрольные суммы """
   def __init__(self, src, dst, hostname, md5sums):
     self.name = hostname + '-' + os.path.basename(src)
-    self.dst = dst + '/' + hostname + '/' + self.name + '/'
-    self.name += '-'
+    self.dst = dst + '/' + hostname + '/' + self.name
     self.md5sums = md5sums
-    self.length = len(src) + 1
+    self.length = len(src)
   def backup(self, src):
     """ Снимает резервную копию для одиночного репозитория """
     if not is_subversion(src):
       return False
     dst = self.dst
+    prefix = self.name
     if len(src) > self.length:
-      dst += self.name + src[self.length:]
+      prefix += src[self.length:].replace('/', '-')
+      dst = self.dst + '/' + prefix
+    log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
     tmp = dst + "/.svndmp"
     try:
       mkdirs(dst)
       if system("svn info file://%s > %s" % (src, tmp)) != 0:
         raise IOError("Invalid subversion repository " + src)
       newrev = readrev(tmp)
-      prefix = self.name + os.path.basename(src)
       md5 = load_md5(dst + "/.md5")[0]
       step = minrev = 100
       while newrev >= step - 1:
