@@ -252,18 +252,18 @@ class SvnBackup:
       newrev = readrev(tmp)
       prefix = self.name + os.path.basename(src)
       md5 = load_md5(dst + "/.md5")[0]
+      step = minrev = 100
+      while newrev >= step - 1:
+        step *= 10
       oldrev = -1
-      minrev = 100
-      if newrev >= minrev - 1:
-        step = minrev
-        while newrev >= step * 10 - 1:
-          step *= 10
-        while step >= minrev:
+      while True:
+          while oldrev + step > newrev:
+            step /= 10
+          if step < minrev:
+            break
           rev = oldrev + step
           self.dump(src, dst, prefix, oldrev, rev, md5, tmp)
           oldrev = rev
-          while rev + step > newrev:
-            step /= 10
       self.dump(src, dst, prefix, oldrev, newrev, md5, tmp)
       return True
     finally:
