@@ -244,31 +244,31 @@ class SvnBackup:
     if not is_subversion(src):
       return False
     dst = self.dst + self.name + src[self.lenght:]
-    self.tmp = dst + "/.svndmp"
+    tmp = dst + "/.svndmp"
     try:
       mkdirs(dst)
-      if system("svn info file://%s > %s" % (src, self.tmp)) != 0:
+      if system("svn info file://%s > %s" % (src, tmp)) != 0:
         raise IOError("Invalid subversion repository " + src)
+      newrev = readrev(tmp)
       prefix = self.name + os.path.basename(src)
       md5 = load_md5(dst + "/.md5")[0]
-      newrev = readrev(self.tmp)
-      minrev = 100
-      maxrev = minrev
-      while newrev >= maxrev * 10 - 1:
-        maxrev *= 10
       oldrev = -1
-      step = maxrev
-      while step >= minrev:
-        rev = oldrev + step
-        self.dump(src, dst, prefix, oldrev, rev, md5)
-        oldrev = rev
-        while rev + step > newrev:
-          step /= 10
-      self.dump(src, dst, prefix, oldrev, newrev, md5)
+      minrev = 100
+      if newrev >= minrev - 1:
+        step = minrev
+        while newrev >= step * 10 - 1:
+          step *= 10
+        while step >= minrev:
+          rev = oldrev + step
+          self.dump(src, dst, prefix, oldrev, rev, md5, tmp)
+          oldrev = rev
+          while rev + step > newrev:
+            step /= 10
+      self.dump(src, dst, prefix, oldrev, newrev, md5, tmp)
       return True
     finally:
-      removeFile(self.tmp)
-  def dump(self, src, dst, prefix, oldrev, newrev, md5dict):
+      removeFile(tmp)
+  def dump(self, src, dst, prefix, oldrev, newrev, md5, tmp):
     """ Запускает svnadmin dump для одиночного репозитория """
     oldrev += 1
     log.debug("svn_dump(%s, %s, %s)", prefix, oldrev, newrev)
@@ -276,16 +276,16 @@ class SvnBackup:
       return
     dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
     path = dst + '/' + dumpname
-    md5 = md5dict.get(dumpname)
-    if md5 != None and md5 == md5sum(path):
-      self.md5sums[path] = md5
+    sum = md5.get(dumpname)
+    if sum != None and sum == md5sum(path):
+      self.md5sums[path] = sum
       return
     if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
-              % (oldrev, newrev, src, self.tmp)) != 0:
+              % (oldrev, newrev, src, tmp)) != 0:
       raise IOError("Invalid subversion dumping")
-    self.md5sums[path] = md5sum(self.tmp)
+    self.md5sums[path] = md5sum(tmp)
     removeFile(path)
-    os.rename(self.tmp, path)
+    os.rename(tmp, path)
 
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
