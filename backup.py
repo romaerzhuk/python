@@ -247,28 +247,23 @@ class SvnBackup:
     self.tmp = dst + "/.svndmp"
     try:
       mkdirs(dst)
-      oldrev = -1
-      md5file = dst + "/.md5"
-      prefix = self.name + os.path.basename(src)
       if system("svn info file://%s > %s" % (src, self.tmp)) != 0:
         raise IOError("Invalid subversion repository " + src)
-      md5 = load_md5(md5file)[0]
+      prefix = self.name + os.path.basename(src)
+      md5 = load_md5(dst + "/.md5")[0]
       newrev = readrev(self.tmp)
-      if newrev == oldrev:
-        return True
       minrev = 100
-      if newrev >= minrev - 1:
-        maxrev = minrev
-        while newrev >= maxrev * 10 - 1:
-          maxrev *= 10
-        oldrev = -1
-        step = maxrev
-        while step >= minrev:
-          rev = oldrev + step
-          self.dump(src, dst, prefix, oldrev, rev, md5)
-          oldrev = rev
-          while rev + step > newrev:
-            step /= 10
+      maxrev = minrev
+      while newrev >= maxrev * 10 - 1:
+        maxrev *= 10
+      oldrev = -1
+      step = maxrev
+      while step >= minrev:
+        rev = oldrev + step
+        self.dump(src, dst, prefix, oldrev, rev, md5)
+        oldrev = rev
+        while rev + step > newrev:
+          step /= 10
       self.dump(src, dst, prefix, oldrev, newrev, md5)
       return True
     finally:
