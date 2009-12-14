@@ -238,14 +238,14 @@ class SvnBackup:
     self.dst = dst + '/' + hostname + '/' + self.name + '/'
     self.name += '-'
     self.md5sums = md5sums
-    self.lenght = len(src) + 1
+    self.length = len(src) + 1
   def backup(self, src):
     """ Снимает резервную копию для одиночного репозитория """
     if not is_subversion(src):
       return False
     dst = self.dst
     if len(src) > self.length:
-      dst += self.name + src[self.lenght:]
+      dst += self.name + src[self.length:]
     tmp = dst + "/.svndmp"
     try:
       mkdirs(dst)
