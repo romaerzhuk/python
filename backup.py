@@ -245,8 +245,7 @@ class SvnBackup:
     if not is_subversion(src):
       return False
     dst = self.dst + self.name + src[self.lenght:]
-    info = dst + "/.info"
-    self.dump = dst + "/.dump"
+    self.tmp = dst + "/.svndmp"
     try:
       mkdirs(dst)
       oldrev = -1
@@ -260,9 +259,9 @@ class SvnBackup:
           if md5[name] == md5sum(path):
             oldrev = max(oldrev, int(m.group(2)))
             self.md5sums[path] = md5[name]
-      if system("svn info file://%s > %s" % (src, info)) != 0:
+      if system("svn info file://%s > %s" % (src, self.tmp)) != 0:
         raise IOError("Invalid subversion repository " + src)
-      newrev = readrev(info)
+      newrev = readrev(self.tmp)
       if newrev == oldrev:
         return True
       minrev = 100
@@ -270,22 +269,22 @@ class SvnBackup:
         maxrev = minrev
         while newrev >= maxrev * 10 - 1:
           maxrev *= 10
-        rev = -1
+        oldrev = -1
         step = maxrev
         while step >= minrev:
-          self.svn_dump(src, dst, prefix, rev, rev + step)
           rev = rev + step
+          self.svn_dump(src, dst, prefix, oldrev, rev)
+          oldrev = rev
           while rev + step > newrev:
             step /= 10
-        oldrev = max(oldrev, rev)
       self.svn_dump(src, dst, prefix, oldrev, newrev)
       return True
     finally:
-      removeFile(info)
-      removeFile(self.dump)
+      removeFile(self.tmp)
   def svn_dump(self, src, dst, prefix, oldrev, newrev):
     """ Запускает svnadmin dump для одиночного репозитория """
     oldrev += 1
+    log.debug("svn_dump(%s, %s, %s)", prefix, oldrev, newrev)
     if oldrev > newrev:
       return
     dumpname = "%s.%06d-%06d.svndmp.gz" % (prefix, oldrev, newrev)
