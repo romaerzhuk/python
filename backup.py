@@ -239,7 +239,6 @@ class SvnBackup:
     self.name += '-'
     self.md5sums = md5sums
     self.lenght = len(src) + 1
-    self.pattern = re.compile(r"^(.+)\.\d+-(\d+)\.svndmp\.gz$")
   def backup(self, src):
     """ Снимает резервную копию для одиночного репозитория """
     if not is_subversion(src):
