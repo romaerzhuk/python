@@ -243,7 +243,9 @@ class SvnBackup:
     """ Снимает резервную копию для одиночного репозитория """
     if not is_subversion(src):
       return False
-    dst = self.dst + self.name + src[self.lenght:]
+    dst = self.dst
+    if len(src) > self.length:
+      dst += self.name + src[self.lenght:]
     tmp = dst + "/.svndmp"
     try:
       mkdirs(dst)
