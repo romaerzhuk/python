@@ -272,16 +272,16 @@ class SvnBackup:
         oldrev = -1
         step = maxrev
         while step >= minrev:
-          rev = rev + step
-          self.svn_dump(src, dst, prefix, oldrev, rev)
+          rev = oldrev + step
+          self.dump(src, dst, prefix, oldrev, rev)
           oldrev = rev
           while rev + step > newrev:
             step /= 10
-      self.svn_dump(src, dst, prefix, oldrev, newrev)
+      self.dump(src, dst, prefix, oldrev, newrev)
       return True
     finally:
       removeFile(self.tmp)
-  def svn_dump(self, src, dst, prefix, oldrev, newrev):
+  def dump(self, src, dst, prefix, oldrev, newrev):
     """ Запускает svnadmin dump для одиночного репозитория """
     oldrev += 1
     log.debug("svn_dump(%s, %s, %s)", prefix, oldrev, newrev)
@@ -292,11 +292,11 @@ class SvnBackup:
     if path in self.md5sums:
       return
     if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
-              % (oldrev, newrev, src, self.dump)) != 0:
+              % (oldrev, newrev, src, self.tmp)) != 0:
       raise IOError("Invalid subversion dumping")
-    self.md5sums[path] = md5sum(self.dump)
+    self.md5sums[path] = md5sum(self.tmp)
     removeFile(path)
-    os.rename(self.dump, path)
+    os.rename(self.tmp, path)
 
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
