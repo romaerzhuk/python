@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, shutil, platform, logging
+import sys, os, re, time, hashlib, socket, shutil, platform, logging, subprocess
 
 def through_dirs(path, filter):
   """ Рекурсивно сканирует директории.
@@ -24,17 +24,23 @@ class StopWatch:
   def stop(self):
     log.info("[%s]: %s sec", self.msg, time.time() - self.start)
 
-def md5sum(file):
-  """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
-  sw = StopWatch("md5sum -b %s" % file)
-  with open(file, "rb") as fd:
-    sum = hashlib.md5()
-    while True:
-      buf = fd.read(1024 * 1024)
-      if len(buf) == 0:
-        sw.stop()
-        return sum.hexdigest().lower()
-      sum.update(buf)
+def md5sum(path, input = None, out = None):
+  """ Вычисляет контрольную сумму файла или потока в шестнадцатиричном виде """
+  if input == None:
+    if not os.path.isfile(path):
+      return None
+    with open(path, "rb") as input:
+      return md5sum(path, input)
+  sw = StopWatch("md5sum -b %s" % path)
+  sum = hashlib.md5()
+  while True:
+    buf = input.read(1024 * 1024)
+    if len(buf) == 0:
+      sw.stop()
+      return sum.hexdigest().lower()
+    sum.update(buf)
+    if out != None:
+      out.write(buf)
 
 def write_md5(file, md5sum, name):
   """  Пишет в открытый файл контрольную сумму
@@ -73,18 +79,6 @@ def readline(file):
   with open(file, "r") as fd:
     return fd.readline()
 
-def system(command):
-  """ Вызывает системную команду и выводит эхо на стандартный вывод """
-  sw = StopWatch(command)
-  res = os.system(command)
-  sw.stop()
-  return res
-
-def chdir(dir):
-  """ Меняет текущую директорию и выводит эхо на стандартный вывод """
-  log.info("cd %s", dir)
-  os.chdir(dir)
-
 def is_subversion(dir):
   """ Проверяет, что директория - репозиторий Subversion """
   if not os.path.isdir(dir):
@@ -117,18 +111,17 @@ def bzrVerify(dir):
         if reParent.match(line): parent = True
         elif reBound.match(line): bound = False
     if bound and os.path.isdir(dir + "/checkout"):
-      system("bzr update %s" % bzr)
+      system(["bzr", "update", bzr])
     elif parent:
-      chdir(bzr)
-      system("bzr pull")
+      system(["bzr", "pull"], cwd = bzr)
   if os.path.isdir(dir + "/repository"):
     notWin = platform.system() != "Windows"
-    res = system("bzr check %s" % bzr)
+    res = system(["bzr", "check", bzr])
     if res != 0 and notWin:
       raise IOError("Invalid bazaar repository %s, result=%s" % (bzr, res))
     packs = dir + "/repository/packs"
     if os.path.isdir(packs) and len(os.listdir(packs)) > 1:
-      res = system("bzr pack %s" % bzr)
+      res = system(["bzr", "pack", bzr])
       if res != 0 and notWin:
         raise IOError("Bazaar pack error %s, result=%s" % (bzr, res))
     dir += "/repository/obsolete_packs"
@@ -145,10 +138,10 @@ def gitVerify(dir):
   log.info("git found: %s", git)
   chdir(git)
   if os.path.isdir(dir + "/svn"):
-    system("git svn fetch")
-  system("git gc")
+    system(["git", "svn", "fetch"], cwd = git)
+  system(["git", "gc"], cwd = git)
   dir += "/repository/obsolete_packs"
-  res = system("git fsck --full")
+  res = system(["git", "fsck", "--full"])
   if res != 0:
     raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
   return True
@@ -157,6 +150,33 @@ def removeFile(path):
   """ Удаляет файл, если он существует """
   if os.path.isfile(path):
     os.remove(path)
+
+def system(command, reader = None, stdin = None, cwd = None):
+  """ Запускает процесс.
+  Вызывает процедуру для чтения стандартного вывода.
+  Возвращает результат процедуры.
+  Выводит на экран команду
+   """
+  sw = StopWatch(' '.join(command))
+  res = system_hidden(command, reader, stdin, cwd)
+  sw.stop()
+  return res
+
+def system_hidden(command, reader = None, stdin = None, cwd = None):
+  """ Запускает процесс.
+  Вызывает процедуру для чтения стандартного вывода.
+  Возвращает результат процедуры """
+  p = subprocess.Popen(command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
+  if reader == None:
+    for line in p.stdout:
+      print line
+    return p.wait()
+  res = reader(p.stdout)
+  # дочитывает стандартный вывод, если что-то осталось
+  for line in p.stdout:
+    pass
+  p.wait()
+  return res
 
 class RepoVerify:
   """ Проверяет корректность репозиториев """
@@ -248,30 +268,24 @@ class SvnBackup:
       prefix += src[self.length:].replace('/', '-')
       dst = self.dst + '/' + prefix
     log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
-    tmp = dst + "/.svndmp"
-    try:
-      mkdirs(dst)
-      if system("svn info file://%s > %s" % (src, tmp)) != 0:
-        raise IOError("Invalid subversion repository " + src)
-      newrev = readrev(tmp)
-      md5 = load_md5(dst + "/.md5")[0]
-      step = minrev = 100
-      while newrev >= step - 1:
-        step *= 10
-      oldrev = -1
-      while True:
-          while oldrev + step > newrev:
-            step /= 10
-          if step < minrev:
-            break
-          rev = oldrev + step
-          self.dump(src, dst, prefix, oldrev, rev, md5, tmp)
-          oldrev = rev
-      self.dump(src, dst, prefix, oldrev, newrev, md5, tmp)
-      return True
-    finally:
-      removeFile(tmp)
-  def dump(self, src, dst, prefix, oldrev, newrev, md5, tmp):
+    mkdirs(dst)
+    newrev = system(("svn", "info", "file://" + src), readrev)
+    md5 = load_md5(dst + "/.md5")[0]
+    step = minrev = 100
+    while newrev >= step - 1:
+      step *= 10
+    oldrev = -1
+    while True:
+        while oldrev + step > newrev:
+          step /= 10
+        if step < minrev:
+          break
+        rev = oldrev + step
+        self.dump(src, dst, prefix, oldrev, rev, md5)
+        oldrev = rev
+    self.dump(src, dst, prefix, oldrev, newrev, md5)
+    return True
+  def dump(self, src, dst, prefix, oldrev, newrev, md5):
     """ Запускает svnadmin dump для одиночного репозитория """
     oldrev += 1
     log.debug("svn_dump(%s, %s, %s)", prefix, oldrev, newrev)
@@ -283,12 +297,10 @@ class SvnBackup:
     if sum != None and sum == md5sum(path):
       self.md5sums[path] = sum
       return
-    if system("svnadmin dump -r %s:%s --incremental %s | gzip > %s" \
-              % (oldrev, newrev, src, tmp)) != 0:
-      raise IOError("Invalid subversion dumping")
-    self.md5sums[path] = md5sum(tmp)
-    removeFile(path)
-    os.rename(tmp, path)
+    with open(path, "wb") as fd:
+      self.md5sums[path] = system(["svnadmin", "dump", "-r", \
+         "%d:%d" % (oldrev, newrev), "--incremental", src], \
+         lambda stdout: system_hidden(["gzip"], lambda gzipout: md5sum(path, gzipout, fd), stdout))
 
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
@@ -357,18 +369,19 @@ class Backup:
     log.debug("generic_backup(%s, %s)", src, dst)
     date = time.strftime("%Y-%m-%d")
     log.debug("dst = %s", os.path.dirname(src))
-    chdir(os.path.dirname(src))
-    src = os.path.basename(src)
-    dir = '/' + self.hostname + '/' + self.hostname + '-' + src
-    name = self.hostname + '-' + src + date + '.' + self.suffix
+    basename = os.path.basename(src)
+    dir = '/' + self.hostname + '/' + self.hostname + '-' + basename
+    name = self.hostname + '-' + basename + date + '.' + self.suffix
     key = dir + '/' + name
     dir = dst + dir
     mkdirs(dir)
     path = dst + key
-    command = self.command % (os.path.normpath(path), src)
-    self.removePair(path)
-    system(command)
-    self.md5sums[path] = md5sum(path)
+    command = (self.command % basename).split(' ')
+    self.removePair(path) # удаляет устаревший файл
+    with open(path, "wb") as fd:
+      self.md5sums[path] = system(command, \
+         lambda stdin: md5sum(path, stdin, fd),
+         cwd = os.path.dirname(src))
     self.removeKey(key, self.destDirs[1:])
   def recoveryDirs(self, key):
     """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
@@ -506,14 +519,13 @@ class Backup:
       log.error("md5sums check error: %s", e)
     return None, False
 
-def readrev(file):
-  """ Читает номер ревизии Subversion из файла """
+def readrev(stdout):
+  """ Читает номер ревизии Subversion из стандартного вывода """
   prefix = "Revision: "
-  with open(file, "r") as f:
-    for line in f:
-      if line.startswith(prefix):
-        return int(line[len(prefix):])
-  raise IOError("Invalid subversion info " + file)
+  for line in stdout:
+    if line.startswith(prefix):
+      return int(line[len(prefix):])
+  raise IOError("Invalid subversion info")
 
 def hostname(index):
   """ Возвращает sys.argv[index] или имя машины """
@@ -535,8 +547,8 @@ def help():
   print "\tdump srcDirs destDirs archivingCommand fileSufix [hostname] -- dumps source directories and writes md5 check sums"
   print "\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files"
   print "\nExamples:"
-  print "\tbackup.py full $HOME/src /local/backup,/remote/backup 'tar czf %s %s' tar.gz 3"
-  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup '7z a %s %s' 7z myhost"
+  print "\tbackup.py full $HOME/src /local/backup,/remote/backup 'tar czf - %s' tar.gz 3"
+  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup '7z a -so %s' 7z myhost"
   print "\tbackup.py clone /local/backup,/remote/backup2 5"
   sys.exit()
 
