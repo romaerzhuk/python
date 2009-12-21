@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, shutil, platform, logging, subprocess
+import sys, os, re, time, hashlib, socket, shutil, platform, logging, subprocess, zlib
 
 def through_dirs(path, filter):
   """ Рекурсивно сканирует директории.
@@ -25,22 +25,31 @@ class StopWatch:
     log.info("[%s]: %s sec", self.msg, time.time() - self.start)
 
 def md5sum(path, input = None, out = None):
-  """ Вычисляет контрольную сумму файла или потока в шестнадцатиричном виде """
+  """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
   if input == None:
     if not os.path.isfile(path):
       return None
+    sw = StopWatch("md5sum -b %s" % path)
     with open(path, "rb") as input:
-      return md5sum(path, input)
-  sw = StopWatch("md5sum -b %s" % path)
+      sum = md5sum(path, input)
+      sw.stop()
+      return sum
   sum = hashlib.md5()
   while True:
     buf = input.read(1024 * 1024)
     if len(buf) == 0:
-      sw.stop()
       return sum.hexdigest().lower()
     sum.update(buf)
     if out != None:
       out.write(buf)
+
+class GzipMd5sum:
+  """ Сжимает поток, считает контрольную сумму сжатого потока, и пишет в файл """
+  def __init__(self, path):
+    self.path = path
+  def __call__(self, input):
+    with open(self.path, "wb") as out:
+      return system_hidden(["gzip"], lambda stdout: md5sum(None, stdout, out), input)
 
 def write_md5(file, md5sum, name):
   """  Пишет в открытый файл контрольную сумму
@@ -297,20 +306,17 @@ class SvnBackup:
     if sum != None and sum == md5sum(path):
       self.md5sums[path] = sum
       return
-    with open(path, "wb") as fd:
-      self.md5sums[path] = system(["svnadmin", "dump", "-r", \
-         "%d:%d" % (oldrev, newrev), "--incremental", src], \
-         lambda stdout: system_hidden(["gzip"], lambda gzipout: md5sum(path, gzipout, fd), stdout))
+    self.md5sums[path] = system(["svnadmin", "dump", "-r", \
+      "%d:%d" % (oldrev, newrev), "--incremental", src], \
+       GzipMd5sum(path))
 
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
-  def __init__(self, srcDirs, destDirs, command, suffix, num, hostname):
+  def __init__(self, srcDirs, destDirs, num, hostname):
     # набор способов разделить нужные копии от избыточных
     self.separators = (TimeSeparator(num), SvnSeparator())
     self.srcDirs = srcDirs
     self.destDirs = destDirs
-    self.command = command
-    self.suffix = suffix
     self.hostname = hostname
     self.dirSet = set()
     self.md5sums = dict()
@@ -371,17 +377,15 @@ class Backup:
     log.debug("dst = %s", os.path.dirname(src))
     basename = os.path.basename(src)
     dir = '/' + self.hostname + '/' + self.hostname + '-' + basename
-    name = self.hostname + '-' + basename + date + '.' + self.suffix
+    name = self.hostname + '-' + basename + date + ".tar.gz"
     key = dir + '/' + name
     dir = dst + dir
     mkdirs(dir)
     path = dst + key
-    command = (self.command % basename).split(' ')
     self.removePair(path) # удаляет устаревший файл
-    with open(path, "wb") as fd:
-      self.md5sums[path] = system(command, \
-         lambda stdin: md5sum(path, stdin, fd),
-         cwd = os.path.dirname(src))
+    self.md5sums[path] = system(["tar", "cf", "-", basename], \
+                                GzipMd5sum(path), \
+                                cwd = os.path.dirname(src))
     self.removeKey(key, self.destDirs[1:])
   def recoveryDirs(self, key):
     """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
@@ -543,12 +547,12 @@ def help():
   """ Выводит справку об использовании """
   print "Usage: backup.py command [options]"
   print "\ncommands:"
-  print "\tfull srcDirs destDirs archivingCommand fileSuffix numberOfFiles [hostname] -- dumps, clones and checks md5 sums"
-  print "\tdump srcDirs destDirs archivingCommand fileSufix [hostname] -- dumps source directories and writes md5 check sums"
+  print "\tfull srcDirs destDirs numberOfFiles [hostname] -- dumps, clones and checks md5 sums"
+  print "\tdump srcDirs destDirs [hostname] -- dumps source directories and writes md5 check sums"
   print "\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files"
   print "\nExamples:"
-  print "\tbackup.py full $HOME/src /local/backup,/remote/backup 'tar czf - %s' tar.gz 3"
-  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup '7z a -so %s' 7z myhost"
+  print "\tbackup.py full $HOME/src /local/backup,/remote/backup 3"
+  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup myhost"
   print "\tbackup.py clone /local/backup,/remote/backup2 5"
   sys.exit()
 
@@ -560,11 +564,11 @@ def main_backup():
   sw = StopWatch("backup")
   command = arg(1)
   if "full" == command:
-    Backup(arg(2).split(","), arg(3).split(","), arg(4), arg(5), int(arg(6)), hostname(7)).full()
+    Backup(arg(2).split(","), arg(3).split(","), int(arg(4)), hostname(5)).full()
   elif "dump" == command:
-    Backup(arg(2).split(","), arg(3).split(","), arg(4), arg(5), None, hostname(6)).dump()
+    Backup(arg(2).split(","), arg(3).split(","), None, hostname(4)).dump()
   elif "clone" == command:
-    Backup([], arg(2).split(","), None, None, int(arg(3)), None).clone()
+    Backup([], arg(2).split(","), int(arg(3)), None).clone()
   else:
     help()
   sw.stop()
