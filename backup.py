@@ -145,12 +145,11 @@ def gitVerify(dir):
     return False
   git = os.path.dirname(dir)
   log.info("git found: %s", git)
-  chdir(git)
   if os.path.isdir(dir + "/svn"):
     system(["git", "svn", "fetch"], cwd = git)
   system(["git", "gc"], cwd = git)
   dir += "/repository/obsolete_packs"
-  res = system(["git", "fsck", "--full"])
+  res = system(["git", "fsck", "--full"], cwd = git)
   if res != 0:
     raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
   return True
