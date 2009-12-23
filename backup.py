@@ -144,19 +144,12 @@ def gitVerify(dir):
   if ".git" != os.path.basename(dir):
     return False
   git_repo = os.path.dirname(dir)
-  if platform.system() != "Windows":
-    git = ["git"]
-  else:
-    git = ["cmd.exe", "/c", "git"]
   log.info("git found: %s", git_repo)
   if os.path.isdir(dir + "/svn"):
-    log.debug("cd %s; git svn fetch", git_repo)
-    system(git + ["svn", "fetch"], cwd = git_repo)
-  log.debug("cd %s; git gc", git_repo)
-  system(git + ["gc"], cwd = git_repo)
+    system(["git", "svn", "fetch"], cwd = git_repo)
+  system(["git", "gc"], cwd = git_repo)
   dir += "/repository/obsolete_packs"
-  log.debug("cd %s; git fsck --full", git_repo)
-  res = system(git + ["fsck", "--full"], cwd = git_repo)
+  res = system(["git", "fsck", "--full"], cwd = git_repo)
   if res != 0:
     raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
   return True
@@ -181,19 +174,20 @@ def system_hidden(command, reader = None, stdin = None, cwd = None):
   """ Запускает процесс.
   Вызывает процедуру для чтения стандартного вывода.
   Возвращает результат процедуры """
-  log.debug("subprocess.Popen(%s)", command)
-  p = subprocess.Popen(command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
+  try:
+    p = subprocess.Popen(command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
+  except Exception, e:
+    if platform.system() != "Windows":
+      raise e
+    p = subprocess.Popen(["cmd.exe", "/c"] + command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
   if reader == None:
-    log.debug("read lines from stdout...")
     for line in p.stdout:
       print rstrip(line)
     return p.wait()
-  log.debug("after read lines from stdout...")
   res = reader(p.stdout)
   # дочитывает стандартный вывод, если что-то осталось
   for line in p.stdout:
     pass
-  log.debug("p.wait()")
   p.wait()
   return res
 
