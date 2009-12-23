@@ -182,7 +182,7 @@ def system_hidden(command, reader = None, stdin = None, cwd = None):
     p = subprocess.Popen(["cmd.exe", "/c"] + command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
   if reader == None:
     for line in p.stdout:
-      print rstrip(line)
+      print line.rstrip()
     return p.wait()
   res = reader(p.stdout)
   # дочитывает стандартный вывод, если что-то осталось
