@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, shutil, platform, logging, subprocess, zlib
+import sys, os, re, time, hashlib, socket, platform, logging, subprocess, zlib
 
 def through_dirs(path, filter):
   """ Рекурсивно сканирует директории.
@@ -495,7 +495,13 @@ class Backup:
     try:
       mkdirs(os.path.dirname(dst))
       removeFile(dst)
-      shutil.copy(src, dst)
+      with open(src, 'rb') as input:
+        with open(dst, 'wb') as out:
+          while True:
+            buf = input.read(1024 * 1024)
+            if len(buf) == 0:
+              break
+            out.write(buf)
     except Exception, e:
       log.error("copy error: %s", e)
     finally:
