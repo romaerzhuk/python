@@ -97,7 +97,7 @@ def main():
   elif "rebase" == command:
     switch(branch)
     merge(trunk)
-    system(["svn", "resolve", "--accept", "working"])
+    system(["svn", "resolve", "--accept", "working", "--recursive", "."])
   else:
     log.error("Unknown command [%s]", command)
     help()
