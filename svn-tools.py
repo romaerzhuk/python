@@ -33,7 +33,7 @@ def help():
   print "\treintegrate   -- svn merge --reintegrate branch into trunk"
   print "\tmerge         -- svn merge trunk into branch"
   print "\trebase        -- svn switch to branch and restore after reintegrate"
-  print "\nsvn-tools used the file 'svn-branch' with contents:"
+  print "\nsvn-tools used the file '.svn/branch' with contents:"
   print " trunk  = URL_TO_TRUNK"
   print " branch = URL_TO_BRANCH"
   sys.exit()
@@ -67,7 +67,7 @@ def main():
                       format = "%(message)s")
   if len(sys.argv) < 1:
     help()
-  svn_branch = "svn-branch"
+  svn_branch = ".svn/branch"
   if not os.path.isfile(svn_branch):
     log.error("File [%s] not found", svn_branch)
     help()
