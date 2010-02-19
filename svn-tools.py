@@ -47,19 +47,6 @@ def update():
 def merge(url):
   system(["svn", "merge", url])
 
-def read_url(lines):
-  prefix = "URL: "
-  for line in lines:
-    if (line.startswith(prefix)):
-      return line[len(prefix):].rstrip()
-
-def assert_url(url):
-  info = system(["svn", "info"], read_url)
-  log.debug("svn url=[%s]", info)
-  if info != url:
-    log.error("expected [%s], but was [%s]", url, info)
-    sys.exit(1)
-
 def main():
   """ Выполняет команду svn-tools """
   logging.basicConfig(level = logging.INFO, \
@@ -101,13 +88,11 @@ def main():
   elif "switch-trunk" == command:
     switch(trunk)
   elif "reintegrate" == command:
-    assert_url(trunk)
-    update()
+    switch(trunk)
     system(["svn", "merge", "--reintegrate", branch]) 
     pass
   elif "merge" == command:
-    assert_url(branch)
-    update()
+    switch(branch)
     merge(trunk)
   elif "rebase" == command:
     switch(branch)
