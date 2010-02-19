@@ -24,20 +24,6 @@ def system(command, reader = None, stdin = None, cwd = None):
   p.wait()
   return res
 
-def help():
-  """ Выводит справку об использовании """
-  print "Usage: svn-tools.py command"
-  print "\ncommands:"
-  print "\tswitch-branch -- svn switch to branch"
-  print "\tswitch-trunk  -- svn switch to trunk"
-  print "\treintegrate   -- svn merge --reintegrate branch into trunk"
-  print "\tmerge         -- svn merge trunk into branch"
-  print "\trebase        -- svn switch to branch and restore after reintegrate"
-  print "\nsvn-tools used the file '.svn/branch' with contents:"
-  print " trunk  = URL_TO_TRUNK"
-  print " branch = URL_TO_BRANCH"
-  sys.exit()
-
 def switch(url):
   system(["svn", "switch", url]) 
 
@@ -47,61 +33,84 @@ def update():
 def merge(url):
   system(["svn", "merge", url])
 
-def main():
-  """ Выполняет команду svn-tools """
-  logging.basicConfig(level = logging.INFO, \
-                      stream = sys.stdout, \
-                      format = "%(message)s")
-  if len(sys.argv) < 1:
-    help()
-  svn_branch = ".svn/branch"
-  if not os.path.isfile(svn_branch):
-    log.error("File [%s] not found", svn_branch)
-    help()
-  command = sys.argv[1]
-  pattern = re.compile(r"^\s*(\S+)\s*=\s*(.+)$")
-  trunk, branch = (None, None)
-  with open(svn_branch, "r") as fd:
-    for line in fd:
-      m = pattern.match(line)
-      if m == None:
-        log.debug("pattern not matches: [%s]", line) 
-      else:
-        name, value = (m.group(1), m.group(2))
-        if "trunk" == name:
-          trunk = value 
-          log.debug("trunk=[%s]", value)
-        elif "branch" == name:
-          branch = value
-          log.debug("branch=[%s]", value)
+class Main:
+  def __init__(self):
+    """ Выполняет команду svn-tools """
+    logging.basicConfig(level = logging.INFO, \
+                        stream = sys.stdout, \
+                        format = "%(message)s")
+    self.props = ".svn/branch"
+    if not os.path.isfile(self.props):
+      log.error("File [%s] not found", self.props)
+      self.help()
+    command = self.arg(1, "command")
+    pattern = re.compile(r"^\s*(\S+)\s*=\s*(.+)$")
+    self.values = dict()
+    with open(self.props, "r") as fd:
+      for line in fd:
+        m = pattern.match(line)
+        if m == None:
+          log.debug("pattern not matches: [%s]", line) 
         else:
-          log.debug("unknown property [%s]", name)
-  if trunk == None:
-    log.error("Property [trunk] undefined")
-    help()
-  if branch == None:
-    log.error("Property [branch] undefined")
-    help()
-  log.debug("test command [%s]", command)
-  if "switch-branch" == command:
-    switch(branch)
-  elif "switch-trunk" == command:
-    switch(trunk)
-  elif "reintegrate" == command:
-    switch(trunk)
-    system(["svn", "merge", "--reintegrate", branch]) 
-    pass
-  elif "merge" == command:
-    switch(branch)
-    merge(trunk)
-  elif "rebase" == command:
-    switch(branch)
-    merge(trunk)
-    system(["svn", "resolve", "--accept", "working", "--recursive", "."])
-  else:
-    log.error("Unknown command [%s]", command)
-    help()
+          self.values[m.group(1)] = m.group(2)
+          log.debug("values[%s]=[%s]", m.group(1), m.group(2))
+    log.debug("test command [%s]", command)
+    if "switch-branch" == command:
+      switch(self.branch())
+    elif "switch-trunk" == command:
+      switch(self.trunk())
+    elif "reintegrate" == command:
+      switch(self.trunk())
+      system(["svn", "merge", "--reintegrate", self.branch()]) 
+      pass
+    elif "merge" == command:
+      switch(self.branch())
+      merge(self.trunk())
+    elif "rebase" == command:
+      switch(self.branch())
+      merge(self.trunk())
+      system(["svn", "resolve", "--accept", "working", "--recursive", "."])
+    elif "tag" == command:
+      system(["svn", "copy", "--message", \
+        self.arg(2, "message"), ".", self.tags() + '/' + self.arg(3, "tag_name")])
+    else:
+      log.error("Unknown command [%s]", command)
+      self.help()
+  def help(self):
+    """ Выводит справку об использовании """
+    print "Usage: svn-tools.py command"
+    print "\ncommands:"
+    print "\tswitch-branch          -- svn switch to branch"
+    print "\tswitch-trunk           -- svn switch to trunk"
+    print "\treintegrate            -- svn merge --reintegrate branch into trunk"
+    print "\tmerge                  -- svn merge trunk into branch"
+    print "\trebase                 -- svn switch to branch and restore after reintegrate"
+    print "\ttag message tag_name   -- svn copy -m message . tags/tag_name"
+    print "\nsvn-tools used the file '%s' with properties:" % self.props
+    print " trunk  = URL_TO_TRUNK"
+    print " branch = URL_TO_BRANCH"
+    print " tags   = URL_TO_TAGS"
+    sys.exit()
+  def arg(self, index, name):
+    """ Возвращает аргумент из командной строки """
+    if len(sys.argv) < index:
+      log.error("The %s argument expected", name)
+      self.help()
+    return sys.argv[index]
+  def value(self, name):
+    """ Возвращает значение из файла .svn/branch """
+    val = self.values.get(name)
+    if val == None:
+      log.error("Property [%s] not found in %s", name, self.props)
+      self.help()
+    return val
+  def trunk(self):
+    return self.value("trunk")
+  def branch(self):
+    return self.value("branch")
+  def tags(self):
+    return self.value("tags")
 
 if __name__ == '__main__':
-  log = logging.getLogger("backup")
-  main()
+  log = logging.getLogger("svn.tools")
+  Main()
