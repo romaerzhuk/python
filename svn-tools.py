@@ -33,6 +33,9 @@ def update():
 def merge(url):
   system(["svn", "merge", url])
 
+def copy(message, src, dst):
+  system(["svn", "copy", "--message", message, src, dst])
+
 class Main:
   def __init__(self):
     """ Выполняет команду svn-tools """
@@ -67,12 +70,11 @@ class Main:
       switch(self.branch())
       merge(self.trunk())
     elif "rebase" == command:
+      system(["svn", "remove", "--message", "rebase", self.branch()])
+      copy("rebase", self.trunk(), self.branch())
       switch(self.branch())
-      merge(self.trunk())
-      system(["svn", "resolve", "--accept", "working", "--recursive", "."])
     elif "tag" == command:
-      system(["svn", "copy", "--message", \
-        self.arg(2, "message"), ".", self.tags() + '/' + self.arg(3, "tag_name")])
+      copy(self.arg(2, "message"), ".", self.tags() + '/' + self.arg(3, "tag_name"))
     else:
       log.error("Unknown command [%s]", command)
       self.help()
