@@ -70,9 +70,8 @@ class Main:
       switch(self.branch())
       merge(self.trunk())
     elif "rebase" == command:
-      system(["svn", "remove", "--message", "rebase", self.branch()])
-      copy("rebase", self.trunk(), self.branch())
       switch(self.branch())
+      system(["svn", "merge", "--accept", "theirs-full", self.trunk()])
     elif "tag" == command:
       copy(self.arg(2, "message"), ".", self.tags() + '/' + self.arg(3, "tag_name"))
     else:
