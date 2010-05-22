@@ -18,7 +18,7 @@ def main():
     print "\ttransmission-switch start|stop"
   removed=[]
   for t in torrents.values():
-    if t.ratio >= 2:
+    if t.ratio >= 1.2:
       removed.append(t.id)
   if len(removed) > 0:
     tc.remove(removed)
