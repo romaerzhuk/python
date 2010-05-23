@@ -24,7 +24,7 @@ def main():
   #print "max_date=", max_date
   removed=[]
   for t in torrents.values():
-    if t.progress >= 100 and (t.ratio >= 1.2 or t.date_done < max_date):
+    if t.ratio >= 1.2 or t.progress >= 100 and t.date_done < max_date:
       #print t.id, t.hashString, t.date_done, t.progress, t.ratio, t.name
       removed.append([t.id, t.hashString])
   #print removed
