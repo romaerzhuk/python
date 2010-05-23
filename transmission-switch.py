@@ -16,9 +16,9 @@ def main():
     tc.start(ids)
   elif "stop" == command:
     tc.stop(ids)
-  else:
+  elif "check" != command:
     print "usage:"
-    print "\ttransmission-switch start|stop"
+    print "\ttransmission-switch start|stop|check"
   max_date = datetime.datetime.today() - datetime.timedelta(92)
   #print "max_date=", max_date
   removed=[]
