@@ -19,12 +19,12 @@ def main():
   elif "check" != command:
     print "usage:"
     print "\ttransmission-switch start|stop|check"
-  max_date = datetime.datetime.today() - datetime.timedelta(92)
+  max_date = datetime.datetime.today() - datetime.timedelta(30)
   #print "max_date=", max_date
   removed=[]
   for t in torrents.values():
     #print t.id, t.hashString, t.date_done, t.progress, t.ratio, t.name
-    if t.ratio >= 2 or t.progress >= 100 and t.date_done < max_date:
+    if t.ratio >= 1.2 or t.progress >= 100 and t.date_done < max_date:
       removed.append([t.id, t.hashString])
   #print removed
   if len(removed) > 0:
