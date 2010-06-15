@@ -415,16 +415,18 @@ class Backup:
             if name != ".md5":
               md5dirs.add(dst)
           elif not name in fileDict:
-            entry = None
+            fileDict[name] = entry = RecoveryEntry(name)
+            found = False
             for i in xrange(len(self.separators)):
               separator = self.separators[i]
               matcher = separator.pattern.match(name)
               if matcher != None:
-                fileDict[name] = entry = RecoveryEntry(name)
                 separator.init(entry, matcher)
                 lists[i].append(entry)
+                found = True
                 break
-            if entry == None:
+            if not found:
+              log.debug('recovery.append(%s)', name)
               recovery.append(entry)
     if len(fileDict) == 0:
       return
@@ -568,6 +570,8 @@ def help():
 
 def main_backup():
   """ Выполняет резервное копирование """
+  global log
+  log = logging.getLogger("backup")
   logging.basicConfig(level = logging.INFO, \
                       stream = sys.stdout, \
                       format = "%(message)s")
@@ -584,5 +588,4 @@ def main_backup():
   sw.stop()
 
 if __name__ == '__main__':
-  log = logging.getLogger("backup")
   main_backup()
