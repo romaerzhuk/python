@@ -62,16 +62,22 @@ class Main:
       switch(self.branch())
     elif "switch-trunk" == command:
       switch(self.trunk())
-    elif "reintegrate" == command:
-      switch(self.trunk())
-      system(["svn", "merge", "--reintegrate", self.branch()]) 
-      pass
     elif "merge" == command:
       switch(self.branch())
       merge(self.trunk())
+    elif "reintegrate" == command:
+      switch(self.trunk())
+      status = system(["svn", "status"], lambda stdout: stdout.readline())
+      if status != '':
+        log.error("Unable to svn merge --reintegrate. Check the status first: [%s]", status)
+        sys.exit(1)
+      system(["svn", "merge", "--reintegrate", self.branch()]) 
+      revid = system(["svn", "commit", "--message", "reintegrate " + self.branch()], read_commited_revision)
+      with open(".svn/reintegrate-revid", "w") as out:
+        out.write(revid)
+      self.rebase()
     elif "rebase" == command:
-      switch(self.branch())
-      system(["svn", "merge", "--accept", "theirs-full", self.trunk()])
+      self.rebase()
     elif "tag" == command:
       copy(self.arg(2, "message"), ".", self.tags() + '/' + self.arg(3, "tag_name"))
     else:
@@ -92,6 +98,10 @@ class Main:
     print " branch = URL_TO_BRANCH"
     print " tags   = URL_TO_TAGS"
     sys.exit()
+  def rebase(self):
+    switch(self.branch())
+    system(["svn", "merge", "--record-only", "--change", readline(".svn/reintegrate-revid"), self.trunk()])
+    system(["svn", "commit", "--message", "rebase " + self.trunk()])
   def arg(self, index, name):
     """ Возвращает аргумент из командной строки """
     if len(sys.argv) < index:
@@ -111,6 +121,21 @@ class Main:
     return self.value("branch")
   def tags(self):
     return self.value("tags")
+
+def read_commited_revision(stdout):
+  """ Читает номер ревизии Subversion из стандартного вывода """
+  last = None
+  for line in stdout:
+    last = line.rstrip()
+    log.info(last)
+  m = re.match(r'^Committed revision (\d*)\.$', last)
+  if m != None:
+    return m.group(1)
+
+def readline(file):
+  """ Возвращает первую строку из файла """
+  with open(file, "r") as fd:
+    return fd.readline()
 
 if __name__ == '__main__':
   log = logging.getLogger("svn.tools")
