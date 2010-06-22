@@ -67,10 +67,6 @@ class Main:
       merge(self.trunk())
     elif "reintegrate" == command:
       switch(self.trunk())
-      status = system(["svn", "status"], lambda stdout: stdout.readline())
-      if status != '':
-        log.error("Unable to svn merge --reintegrate. Check the status first: [%s]", status)
-        sys.exit(1)
       system(["svn", "merge", "--reintegrate", self.branch()]) 
       revid = system(["svn", "commit", "--message", "reintegrate " + self.branch()], read_commited_revision)
       with open(".svn/reintegrate-revid", "w") as out:
