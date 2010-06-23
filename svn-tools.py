@@ -96,8 +96,9 @@ class Main:
     sys.exit()
   def rebase(self):
     switch(self.branch())
-    system(["svn", "merge", "--record-only", "--change", readline(".svn/reintegrate-revid"), self.trunk()])
-    system(["svn", "commit", "--message", "rebase " + self.trunk()])
+    revId = readline(".svn/reintegrate-revid")
+    system(["svn", "merge", "--record-only", "--change", revId, self.trunk()])
+    system(["svn", "commit", "--message", "rebase"])
   def arg(self, index, name):
     """ Возвращает аргумент из командной строки """
     if len(sys.argv) < index:
