@@ -68,7 +68,7 @@ class Main:
     elif "reintegrate" == command:
       switch(self.trunk())
       system(["svn", "merge", "--reintegrate", self.branch()]) 
-      revid = system(["svn", "commit", "--message", "reintegrate " + self.branch()], read_commited_revision)
+      revid = system(["svn", "commit", "--message", self.arg(2, "message")], read_commited_revision)
       with open(".svn/reintegrate-revid", "w") as out:
         out.write(revid)
       self.rebase()
@@ -85,7 +85,7 @@ class Main:
     print "\ncommands:"
     print "\tswitch-branch          -- svn switch to branch"
     print "\tswitch-trunk           -- svn switch to trunk"
-    print "\treintegrate            -- svn merge --reintegrate branch into trunk"
+    print "\treintegrate message    -- svn merge --reintegrate branch into trunk"
     print "\tmerge                  -- svn merge trunk into branch"
     print "\trebase                 -- svn switch to branch and restore after reintegrate"
     print "\ttag message tag_name   -- svn copy -m message . tags/tag_name"
