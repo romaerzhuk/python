@@ -31,7 +31,7 @@ def update():
   system(["svn", "update"])
 
 def merge(url):
-  system(["svn", "merge", url])
+  system(["svn", "merge", "--accept", "postpone", url])
 
 def copy(message, src, dst):
   system(["svn", "copy", "--message", message, src, dst])
