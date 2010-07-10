@@ -12,6 +12,8 @@ def main():
     command = sys.argv[1]
   else:
     command = None
+  if ids == None or len(ids) == 0:
+    return
   if "start" == command:
     tc.start(ids)
   elif "stop" == command:
