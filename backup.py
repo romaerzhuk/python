@@ -285,7 +285,7 @@ class SvnBackup:
     newrev = system(("svn", "info", "file://" + src), readrev)
     md5 = load_md5(dst + "/.md5")[0]
     step = minrev = 100
-    while newrev >= step - 1:
+    while newrev >= step - 1 and step < 10000:
       step *= 10
     oldrev = -1
     while True:
