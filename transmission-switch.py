@@ -26,7 +26,7 @@ def main():
   removed=[]
   for t in torrents.values():
     #print t.id, t.hashString, t.date_done, t.progress, t.ratio, t.name
-    if t.ratio >= 2 or t.progress >= 100 and t.date_done < max_date:
+    if t.ratio >= 5 or t.progress >= 100 and t.date_done < max_date:
       removed.append(t.id)
   #print removed
   if len(removed) > 0:
