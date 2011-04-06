@@ -326,6 +326,9 @@ class Backup:
     self.md5sums = dict()
     self.md5cache = (None, None)
     self.checked = time.time() - 2 * 24 * 3600
+    self.commands = dict() # команды на копирование/удаление файлов разделённые на директории
+    for dir in destDirs:
+      self.commands[dir] = []
   def full(self):
     """ Архивирует исходные файлы и клонирует копии в несколько источников """
     self.dump()
@@ -354,6 +357,9 @@ class Backup:
   def clone(self):
     """ Клонирует копии в несколько источников """
     self.recoveryDirs("")
+    for dst in self.destDirs:
+      for command in self.commands[dst]:
+        command()
   def backup(self, src):
     """ Создаёт резервные копии директории """
     try:
@@ -390,7 +396,8 @@ class Backup:
     self.md5sums[path] = system(["tar", "cf", "-", basename], \
                                 GzipMd5sum(path), \
                                 cwd = os.path.dirname(src))
-    self.removeKey(key, self.destDirs[1:])
+    for dst in self.destDirs[1:]:
+      self.removePair(dst + key)
   def recoveryDirs(self, key):
     """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
     Удаляет устаревшие копии """
@@ -461,29 +468,35 @@ class Backup:
         md5files.append(f)
         for dst in f.list:
           f.md5[dst] = f.md5[f.dir]
-          self.copy(f.dir + k, dst + k)
-          removeFile(dst + k + ".md5") # устаревший файл
+          srcPath = f.dir + k
+          dstPath = dst + k
+          log.debug("lazy cp %s %s", srcPath, dstPath)
+          self.commands[dst].append(lambda: self.copy(srcPath, dstPath))
+          log.debug("lazy rm %s", dstPath)
+          self.commands[dst].append(lambda: removeFile(dstPath + ".md5")) # устаревший файл
     for f in remove:
-      self.removeKey(key + '/' + f.name, self.destDirs)
+      for dst in self.destDirs:
+        path = dst + key + '/' + f.name
+        log.debug("lazy rm %s", path)
+        self.commands[dst].append(lambda: self.removePair(path))
     for dst in md5dirs:
-      try:
-        dir = dst + key
-        name = dir + "/.md5"
-        removeFile(name)
-        with open(name, "wb") as fd:
-          for f in md5files:
-            write_md5(fd, f.md5[dst], f.name)
-          for name in os.listdir(dir):
-            path = dir + '/' + name
-            if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
-              removeFile(path)
-      except Exception, e:
-        log.error("md5sums error: %s", e)
-  def removeKey(self, key, destDirs):
-    """ Удаляет файл в заданных директориях """
-    for dir in destDirs:
-      path = dir + key
-      self.removePair(path)
+      log.debug("lazy md5sum -b * > %s%s/.md5", dst, key)
+      self.commands[dst].append(lambda: self.writeMd5(dst, key, md5files))    
+  def writeMd5(self, dst, key, md5files):
+    """ Пишет контрольные суммы в файл """
+    try:
+      dir  = dst + key 
+      path = dir + "/.md5"
+      removeFile(path)
+      with open(path, "wb") as fd:
+        for f in md5files:
+          write_md5(fd, f.md5[dst], f.name)
+      for name in os.listdir(dir):
+        path = dir + '/' + name
+        if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
+          removeFile(path)
+    except Exception, e:
+      log.error("md5sums error: %s", e)
   def removePair(self, path):
     """ Удаляет файл и контрольную сумму """
     if os.path.isfile(path):
