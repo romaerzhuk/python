@@ -471,7 +471,10 @@ class Backup:
           srcPath = f.dir + k
           dstPath = dst + k
           log.debug("lazy cp %s %s", srcPath, dstPath)
-          self.commands[dst].append(lambda: self.copy(srcPath, dstPath))
+          for i in self.destDirs:
+            if i in (dst, f.dir):
+              self.commands[i].append(lambda: self.copy(srcPath, dstPath))
+              break
           log.debug("lazy rm %s", dstPath)
           self.commands[dst].append(lambda: removeFile(dstPath + ".md5")) # устаревший файл
     for f in remove:
