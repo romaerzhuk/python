@@ -468,24 +468,36 @@ class Backup:
         md5files.append(f)
         for dst in f.list:
           f.md5[dst] = f.md5[f.dir]
-          if dst != self.destDirs[0]:
-            src = self.destDirs[0]
-          else:
-            src = f.dir
-          srcPath = src + k
-          dstPath = dst + k
-          log.debug("lazy cp %s %s", srcPath, dstPath)
-          self.commands[dst].append(lambda: self.copy(srcPath, dstPath))
-          log.debug("lazy rm %s", dstPath)
-          self.commands[dst].append(lambda: removeFile(dstPath + ".md5")) # устаревший файл
+          self.lazyCopy(f.dir, dst, k)
+          self.lazyRemove(dst, k + ".md5") # устаревший файл
     for f in remove:
       for dst in self.destDirs:
-        path = dst + key + '/' + f.name
-        log.debug("lazy rm %s", path)
-        self.commands[dst].append(lambda: self.removePair(path))
+        self.lazyRemovePair(dst, key + '/' + f.name)
     for dst in md5dirs:
-      log.debug("lazy md5sum -b * > %s%s/.md5", dst, key)
-      self.commands[dst].append(lambda: self.writeMd5(dst, key, md5files))    
+      self.lazyWriteMd5(dst, key, md5files)
+  def lazyCopy(self, src, dst, key):
+    """ Выполняет отложенное копирование файла """ 
+    if dst != self.destDirs[0]:
+      # быстрее всего копировать с 1й директории, с локального диска
+      src = self.destDirs[0]
+    srcPath = src + key
+    dstPath = dst + key
+    log.debug("lazy cp %s %s", srcPath, dstPath)
+    self.commands[dst].append(lambda: self.copy(srcPath, dstPath))
+  def lazyRemove(self, dst, key):
+    """ Выполняет отолженное удаление файла """
+    path = dst + key
+    log.debug("lazy rm %s", path)
+    self.commands[dst].append(lambda: removeFile(path))
+  def lazyRemovePair(self, dst, key):
+    """ Выполняет отолженное удаление пары файлов """
+    path = dst + key
+    log.debug("lazy rm %s", path)
+    self.commands[dst].append(lambda: self.removePair(path))
+  def lazyWriteMd5(self, dst, key, md5files):
+    """ Выполняет отложенную запись контрольной суммы """
+    log.debug("lazy md5sum -b * > %s%s/.md5", dst, key)
+    self.commands[dst].append(lambda: self.writeMd5(dst, key, md5files))    
   def writeMd5(self, dst, key, md5files):
     """ Пишет контрольные суммы в файл """
     try:
