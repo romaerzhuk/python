@@ -468,13 +468,14 @@ class Backup:
         md5files.append(f)
         for dst in f.list:
           f.md5[dst] = f.md5[f.dir]
-          srcPath = f.dir + k
+          if dst != self.destDirs[0]:
+            src = self.destDirs[0]
+          else:
+            src = f.dir
+          srcPath = src + k
           dstPath = dst + k
           log.debug("lazy cp %s %s", srcPath, dstPath)
-          for i in self.destDirs:
-            if i in (dst, f.dir):
-              self.commands[i].append(lambda: self.copy(srcPath, dstPath))
-              break
+          self.commands[dst].append(lambda: self.copy(srcPath, dstPath))
           log.debug("lazy rm %s", dstPath)
           self.commands[dst].append(lambda: removeFile(dstPath + ".md5")) # устаревший файл
     for f in remove:
