@@ -59,7 +59,7 @@ class Main:
         self.dir = '../' + self.dir
         log.debug('%s not found, search from %s', props, dir)
         if not os.path.isdir(self.dir):
-          log.error('File [%s] not found', self.props)
+          log.error('File [.svn/%s] not found', self.props)
           sys.exit()
         props = self.dir + '.svn/' + self.props
       self.aliases = dict()
