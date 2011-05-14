@@ -26,16 +26,23 @@ def system(command, reader = None, stdin = None, cwd = None):
 
 class Main:
   def __init__(self):
-    """ Выполняет команду svn с заменой trunk:, branch:, tag: на соответствующие URL-ы """
+    """ Выполняет команду svn с заменой trunk:, branch:, tag:  на соответствующие URL-ы
+       Так же определены псевдонимы:
+         - корневая директория проекта - root:
+         - URL текущей ветки проекта - url:
+        """
     logging.basicConfig(level = logging.INFO, \
                         stream = sys.stdout, \
                         format = "%(message)s")
-    self.props = '.svn/url'
+    self.props = 'url'
+    self.svn = sys.argv[1]
     self.aliases = None
     self.url_val = None
-    list = [sys.argv[1]]
+    self.dir = ''
+    list = [self.svn]
     for arg in sys.argv[2:]:
       i = arg.find(':')
+      log.debug('[%s].find(":")=%s', arg, i)
       if i > 0:
         val = self.alias(arg[:i])
         if val != None:
@@ -45,16 +52,19 @@ class Main:
     system(list)
   def alias(self, name):
     """ Возвращает значение из файла .svn/url """
-    if 'url' == name:
-      return self.url()
     if self.aliases == None:
-      self.aliases = dict()
       log.debug("alias(%s)", name)
+      props = self.dir + '.svn/' + self.props
+      while not os.path.isfile(props):
+        self.dir = '../' + self.dir
+        log.debug('%s not found, search from %s', props, dir)
+        if not os.path.isdir(self.dir):
+          log.error('File [%s] not found', self.props)
+          sys.exit()
+        props = self.dir + '.svn/' + self.props
+      self.aliases = dict()
       pattern = re.compile(r'^\s*(\S+)\s*=\s*(.+)$')
-      if not os.path.isfile(self.props):
-        log.error("File [%s] not found", self.props)
-        sys.exit()
-      with open(self.props, "r") as fd:
+      with open(props, "r") as fd:
         for line in fd:
           log.debug("line: [%s]", line)
           m = pattern.match(line)
@@ -62,11 +72,18 @@ class Main:
             log.debug("pattern not matches: [%s]", line)
           else:
             self.aliases[m.group(1)] = m.group(2)
+    if 'root' == name:
+      return self.dir
+    if 'url' == name:
+      return self.url()
     return self.aliases.get(name)
   def url(self):
     """ Возвращает URL """
     if self.url_val == None:
-      self.url_val = system(["svn", "info"], self.read_url)
+      command = [self.svn, 'info']
+      if self.dir != '':
+        command.append(self.dir)
+      self.url_val = system(command, self.read_url)
       log.debug("URL: %s", self.url_val)
     return self.url_val
   def read_url(self, stdout):
@@ -78,8 +95,8 @@ class Main:
         if m != None:
           return m.group(1)
       log.error("URL not found")
-      self.help()
+      sys.exit()
 
 if __name__ == '__main__':
-  log = logging.getLogger("svn.tools")
+  log = logging.getLogger("svn")
   Main()
