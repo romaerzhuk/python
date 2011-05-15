@@ -78,7 +78,7 @@ class Main:
       while True:
         system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
         if len(self.aliases) > 0:
-          log.debug('svn pg aliases: found. Use root=%s', self.root)
+          log.debug('svn pg aliases: found. Using root=%s', self.root)
           break
         if self.root == '':
           self.root = '..'
@@ -87,7 +87,7 @@ class Main:
         log.debug('svn pg aliases: not found. Search from %s', self.root)
         if not os.path.isdir(self.root + '/.svn'):
           self.root = ''
-          log.debug('svn pg aliases: not found. Use root=%s', self.root)
+          log.debug('svn pg aliases: not found. Using root=%s', self.root)
           break
     if 'root' == name:
       return self.root
@@ -104,7 +104,7 @@ class Main:
       log.debug("URL: %s", self.url_val)
     return self.url_val
   def read_alias(self, stdout):
-    """ Читает свойства в виде строк, псевдоним=url, из svn pg url """
+    """ Читает свойства в виде строк, псевдоним=url, из svn pg aliases """
     self.aliases = dict()
     pattern = re.compile(r'^\s*(\S+)\s*=\s*(.+)$')
     for line in stdout:
