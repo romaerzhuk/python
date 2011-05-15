@@ -74,6 +74,11 @@ class Main:
     if self.aliases == None:
       log.debug('alias(%s)', name)
       while True:
+        if not os.path.isdir(self.root + '/.svn'):
+          self.root = ''
+          self.aliases = dict()
+          log.debug('svn pg aliases: not found. Using root=%s', self.root)
+          break
         system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
         if len(self.aliases) > 0:
           log.debug('svn pg aliases: found. Using root=%s', self.root)
@@ -83,10 +88,6 @@ class Main:
         else:
           self.root = '../' + self.root
         log.debug('svn pg aliases: not found. Search from %s', self.root)
-        if not os.path.isdir(self.root + '/.svn'):
-          self.root = ''
-          log.debug('svn pg aliases: not found. Using root=%s', self.root)
-          break
     if 'root' == name:
       return self.root
     if 'url' == name:
