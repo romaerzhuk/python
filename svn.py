@@ -67,7 +67,6 @@ class Main:
     """ Возвращает значение из свойства svn pg aliases """
     if self.aliases == None:
       log.debug('alias(%s)', name)
-      cnt = 0
       while True:
         system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
         if len(self.aliases) > 0:
@@ -82,9 +81,6 @@ class Main:
           self.root = ''
           log.debug('svn pg aliases: not found. Use root=%s', self.root)
           break
-        cnt += 1
-        if cnt > 10:
-          sys.exit()
     if 'root' == name:
       return self.root
     if 'url' == name:
