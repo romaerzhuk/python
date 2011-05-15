@@ -54,7 +54,7 @@ class Main:
           else:
             arg = val + '/' + arg[i + 1:]
       list.append(arg)
-    if self.root != '' and command in ('sw', 'switch', 'up', 'merge'):
+    if self.root != '' and command in ('sw', 'switch', 'up', 'update', 'merge'):
       count = 0
       for arg in list[2:]:
         if not arg.startswith('-'):
