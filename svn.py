@@ -31,7 +31,7 @@ class Main:
        Предопределены псевдонимы:
          - root: - корневая директория проекта;
          - url: - URL текущей ветки проекта. """
-    logging.basicConfig(level = logging.INFO, \
+    logging.basicConfig(level = logging.DEBUG, \
                         stream = sys.stdout, \
                         format = '%(message)s')
     self.svn = sys.argv[1]
@@ -74,7 +74,11 @@ class Main:
     if self.aliases == None:
       log.debug('alias(%s)', name)
       while True:
-        if not os.path.isdir(self.root + '/.svn'):
+        if self.root == '':
+          svn = '.svn'
+        else:
+          svn = self.root + '/.svn'
+        if not os.path.isdir(svn):
           self.root = ''
           self.aliases = dict()
           log.debug('svn pg aliases: not found. Using root=%s', self.root)
