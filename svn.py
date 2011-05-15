@@ -73,11 +73,8 @@ class Main:
     """ Возвращает значение из свойства svn pg aliases """
     if self.aliases == None:
       log.debug('alias(%s)', name)
+      svn = '.svn'
       while True:
-        if self.root == '':
-          svn = '.svn'
-        else:
-          svn = self.root + '/.svn'
         if not os.path.isdir(svn):
           self.root = ''
           self.aliases = dict()
@@ -92,6 +89,7 @@ class Main:
         else:
           self.root = '../' + self.root
         log.debug('svn pg aliases: not found. Search from %s', self.root)
+        svn = self.root + '/.svn'
     if 'root' == name:
       return self.root
     if 'url' == name:
