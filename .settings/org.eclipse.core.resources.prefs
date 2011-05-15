@@ -1,6 +1,5 @@
-#Sat May 14 14:50:25 MSD 2011
+#Sun May 15 18:16:14 MSD 2011
 eclipse.preferences.version=1
 encoding/backup.py=utf8
 encoding/clean.py=cp1251
-encoding/svn-tools.py=utf8
 encoding/svn.py=utf8
