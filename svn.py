@@ -33,34 +33,42 @@ class Main:
          - root: - корневая директория проекта;
          - url: - URL текущей ветки проекта.
         """
-    logging.basicConfig(level = logging.INFO, \
+    logging.basicConfig(level = logging.DEBUG, \
                         stream = sys.stdout, \
                         format = "%(message)s")
     self.svn = sys.argv[1]
     self.aliases = None
     self.url_val = None
     self.root = ''
-    command = sys.argv[2]
-    list = [self.svn, command]
-    for arg in sys.argv[3:]:
-      i = arg.find(':')
-      log.debug('[%s].find(":")=%s', arg, i)
-      if i > 0:
-        val = self.alias(arg[:i])
-        if val != None:
-          suffix = arg[i + 1:]
-          if suffix == '':
-            arg = val
-          else:
-            arg = val + '/' + arg[i + 1:]
-      list.append(arg)
-    if self.root != '' and command in ('sw', 'switch', 'up', 'update', 'merge'):
-      count = 0
-      for arg in list[2:]:
-        if not arg.startswith('-'):
-          count += 1
-      if count < 2:
-        list.append(self.root)
+    list = [self.svn]
+    if len(sys.argv) > 2:
+      command = sys.argv[2]
+      list.append(command)
+      for arg in sys.argv[3:]:
+        i = arg.find(':')
+        log.debug('[%s].find(":")=%s', arg, i)
+        if i > 0:
+          val = self.alias(arg[:i])
+          if val != None:
+            suffix = arg[i + 1:]
+            if suffix == '':
+              arg = val
+            else:
+              arg = val + '/' + arg[i + 1:]
+        list.append(arg)
+      if command in ('status', 'st', 'commit', 'ci'):
+        count = 1
+      elif command in ('sw', 'switch', 'up', 'update', 'merge'):
+        count = 2
+      else:
+        count = 0
+      if count > 0 and self.alias('root') != '':
+        for arg in list[2:]:
+          if not arg.startswith('-'):
+            count -= 1
+        log.debug('count=%s', count)
+        if count > 0:
+          list.append(self.root)
     log.debug('%s', list)
     system(list, stdin = sys.stdin)
   def alias(self, name):
