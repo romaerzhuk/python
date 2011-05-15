@@ -31,7 +31,7 @@ class Main:
        Предопределены псевдонимы:
          - root: - корневая директория проекта;
          - url: - URL текущей ветки проекта. """
-    logging.basicConfig(level = logging.DEBUG, \
+    logging.basicConfig(level = logging.INFO, \
                         stream = sys.stdout, \
                         format = '%(message)s')
     self.svn = sys.argv[1]
