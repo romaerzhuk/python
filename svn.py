@@ -29,9 +29,9 @@ def system(command, reader = None, stdin = None, cwd = None):
 class Main:
   def __init__(self):
     """ Выполняет команду svn с заменой trunk:, branch:, tag:  на соответствующие URL-ы
-       Так же определены псевдонимы:
-         - корневая директория проекта - root:
-         - URL текущей ветки проекта - url:
+       Предопределены псевдонимы:
+         - root: - корневая директория проекта;
+         - url: - URL текущей ветки проекта.
         """
     logging.basicConfig(level = logging.INFO, \
                         stream = sys.stdout, \
@@ -40,8 +40,9 @@ class Main:
     self.aliases = None
     self.url_val = None
     self.root = ''
-    list = [self.svn]
-    for arg in sys.argv[2:]:
+    command = sys.argv[2]
+    list = [self.svn, command]
+    for arg in sys.argv[3:]:
       i = arg.find(':')
       log.debug('[%s].find(":")=%s', arg, i)
       if i > 0:
@@ -53,6 +54,13 @@ class Main:
           else:
             arg = val + '/' + arg[i + 1:]
       list.append(arg)
+    if self.root != '' and command in ('sw', 'switch', 'up', 'merge'):
+      count = 0
+      for arg in list[2:]:
+        if not arg.startswith('-'):
+          count += 1
+      if count < 2:
+        list.append(self.root)
     log.debug('%s', list)
     system(list, stdin = sys.stdin)
   def alias(self, name):
