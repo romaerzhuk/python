@@ -56,7 +56,7 @@ class Main:
             else:
               arg = val + '/' + arg[i + 1:]
         list.append(arg)
-      if command in ('status', 'st', 'commit', 'ci'):
+      if command in ('status', 'st', 'commit', 'ci', 'revert'):
         count = 1
       elif command in ('sw', 'switch', 'up', 'update', 'merge'):
         count = 2
