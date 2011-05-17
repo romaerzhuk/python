@@ -36,8 +36,8 @@ class Main:
                         format = '%(message)s')
     self.svn = sys.argv[1]
     self.aliases = None
-    self.url_val = None
     self.root = ''
+    self.url_val = None
     list = [self.svn]
     if len(sys.argv) > 2:
       command = sys.argv[2]
@@ -74,12 +74,17 @@ class Main:
     if self.aliases == None:
       log.debug('alias(%s)', name)
       svn = '.svn'
+      url = None
       while True:
-        if not os.path.isdir(svn):
+        if not os.path.isdir(svn) \
+		or (url != None and \
+                not (url.startswith(self.url()) and self.url()[len(url)+1:].find('/') < 0)):
           self.root = ''
+          self.url_val = None
           self.aliases = dict()
           log.debug('svn pg aliases: not found. Using root=%s', self.root)
           break
+        url = self.url()
         system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
         if len(self.aliases) > 0:
           log.debug('svn pg aliases: found. Using root=%s', self.root)
@@ -90,11 +95,17 @@ class Main:
           self.root = '../' + self.root
         log.debug('svn pg aliases: not found. Search from %s', self.root)
         svn = self.root + '/.svn'
+        self.url_val = None
     if 'root' == name:
       return self.root
     if 'url' == name:
-      return self.url()
+      return self.get_url()
     return self.aliases.get(name)
+  def get_url(self):
+    """ Возвращает URL """
+    if self.url_val == None:
+      self.url_val = self.url(self.root)
+    return self.url_val
   def url(self):
     """ Возвращает URL """
     if self.url_val == None:
@@ -116,14 +127,13 @@ class Main:
         self.aliases[m.group(1)] = m.group(2)
   def read_url(self, stdout):
     """ Читает URL из svn info """
-    if self.url_val == None:
-      pattern = re.compile(r'^URL:[ ]*(.+)$')
-      for line in stdout:
-        m = pattern.match(line)
-        if m != None:
-          return m.group(1)
-      log.error('URL not found')
-      sys.exit()
+    pattern = re.compile(r'^URL:[ ]*(.+)$')
+    for line in stdout:
+      m = pattern.match(line)
+      if m != None:
+        return m.group(1)
+    log.error('URL not found')
+    sys.exit()
 
 if __name__ == '__main__':
   log = logging.getLogger('svn')
