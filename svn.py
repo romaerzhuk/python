@@ -104,7 +104,7 @@ class Main:
   def get_url(self):
     """ Возвращает URL """
     if self.url_val == None:
-      self.url_val = self.url(self.root)
+      self.url_val = self.url()
     return self.url_val
   def url(self):
     """ Возвращает URL """
@@ -127,7 +127,7 @@ class Main:
         self.aliases[m.group(1)] = m.group(2)
   def read_url(self, stdout):
     """ Читает URL из svn info """
-    pattern = re.compile(r'^URL:[ ]*(.+)$')
+    pattern = re.compile(r'^URL:\s*(\S+)\s*$')
     for line in stdout:
       m = pattern.match(line)
       if m != None:
