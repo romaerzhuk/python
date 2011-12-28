@@ -32,9 +32,10 @@ class Main(QtGui.QWidget):
     grid.addWidget(ok, 1, 0, 1, 2)
     self.setLayout(grid)
     self.resize(300, 80)
-    desktop = app.desktop()
-    self.move((desktop.width() - self.width()) / 2,
-        (desktop.height() - self.height()) / 2)
+    screen = app.desktop().primaryScreen()
+    size = app.desktop().screenGeometry(screen).size()
+    self.move((size.width() - self.width()) / 2,
+        (size.height() - self.height()) / 2)
     self.show()
     sys.exit(app.exec_())
   def resktop(self):
