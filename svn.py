@@ -16,7 +16,7 @@ def system(command, reader = None, stdin = sys.stdin, cwd = None):
   except Exception, e:
     if platform.system() != 'Windows':
       raise e
-    p = subprocess.Popen(['cmd.exe', '/c'] + command, stdout = stdout, stdin = stdin, stderr = stderr, cwd = cwd)
+    p = subprocess.Popen(['cmd.exe', '/c'] + command, stdout = stdout, stdin = stdin, stderr = sys.stderr, cwd = cwd)
   if reader != None:
     res = reader(p.stdout)
     # дочитывает стандартный вывод, если что-то осталось
