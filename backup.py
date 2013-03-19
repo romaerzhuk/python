@@ -145,7 +145,18 @@ def gitVerify(dir):
     return False
   git_repo = os.path.dirname(dir)
   log.info("git found: %s", git_repo)
-  system(["git", "svn", "fetch", "--all"], cwd = git_repo)
+  svn = re.compile(r'^\[svn-remote "(.+)"\]$')
+  config = dir + "/config"
+  log.debug("config=[%s]", config)
+  with open(config, "r") as fd:
+    for line in fd:
+      line = line.rstrip()
+      matcher = svn.match(line)
+      log.debug("match('%s')=%s", line, matcher)
+      if matcher != None:
+        svn_remote = matcher.group(1)
+        log.debug("svn_remote+=%s", svn_remote)
+        system(["git", "svn", "fetch", svn_remote], cwd = git_repo)
   system(["git", "prune"], cwd = git_repo)
   dir += "/repository/obsolete_packs"
   res = system(["git", "fsck", "--full"], cwd = git_repo)
