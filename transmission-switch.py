@@ -3,10 +3,7 @@ import sys, datetime, transmissionrpc
 
 def main():
   tc = transmissionrpc.Client('localhost', port=9091)
-  fields = ['id', 'hashString', 'name', 'sizeWhenDone', 'leftUntilDone'
-            , 'eta', 'status', 'rateUpload', 'rateDownload', 'uploadedEver'
-            , 'downloadedEver', 'doneDate']
-  torrents = tc.info(arguments=fields)
+  torrents = tc.info()
   ids = torrents.keys()
   if len(sys.argv) > 1:
     command = sys.argv[1]
@@ -26,7 +23,7 @@ def main():
   removed=[]
   for t in torrents.values():
     #print t.id, t.hashString, t.date_done, t.progress, t.ratio, t.name
-    if t.ratio >= 10 or t.progress >= 100 and t.date_done < max_date:
+    if t.ratio >= 30 or t.progress >= 100 and t.date_done < max_date:
       removed.append(t.id)
   #print removed
   if len(removed) > 0:
