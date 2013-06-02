@@ -273,7 +273,7 @@ class GitBackup:
     log.info("git backup: %s", src)
     config = src + '/.git/config'
     if not os.path.isfile(config):
-      config = dir + '/config'
+      config = src + '/config'
     log.debug("config=[%s]", config)
     with open(config, "r") as fd:
       for line in fd:
