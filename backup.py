@@ -401,7 +401,7 @@ class Backup:
           self.safeBackup(strategy, dir, dst, prefix)
         else:
           prf = prefix + dir[length:].replace('/', '-')
-          self.safeBackup(strategy, dir, dst + prf, prf)
+          self.safeBackup(strategy, dir, dst +'/' + prf, prf)
   def findStrategy(self, dir):
     """ Ищет способ резервного копирования.
         Устанавливает self.last_modified последнее время модификации директории. """
