@@ -91,80 +91,16 @@ def readline(file):
   with open(file, "r") as fd:
     return fd.readline()
 
-def is_subversion(dir):
-  """ Проверяет, что директория - репозиторий Subversion """
-  if not os.path.isdir(dir):
-    return False
-  svnList = ((1, "conf"), (1, "db"), (1, "hooks"), (1, "locks"), (0, "README.txt"))
-  dirSet = set(os.listdir(dir))
-  for type, name in svnList:
+def dir_contains(dir, dirs, files):
+  """ Проверяет наличие в директории списка директорий и файлов """
+  for name in dirs:
     path = dir + '/' + name
-    if name not in dirSet or type == 1 and not os.path.isdir(path) or type == 0 and not os.path.isfile(path):
+    if not os.path.isdir(path):
       return False
-  if not readline(dir + "/README.txt").startswith("This is a Subversion repository;"):
-    return False
-  return True
-
-def bzrVerify(dir):
-  """  Проверяет корректность файлов bzr-репозиториев
-  Обновляет, перепаковывает """
-  if ".bzr" != os.path.basename(dir):
-    return False
-  bzr = os.path.dirname(dir)
-  log.info("bzr found: %s", bzr)
-  conf = dir + "/branch/branch.conf"
-  if os.path.isfile(conf):
-    reParent = re.compile(r"^parent_location\s*=")
-    reBound = re.compile(r"^bound\s*=\s*False")
-    parent = False
-    bound = True
-    with open(conf) as f:
-      for line in f:
-        if reParent.match(line): parent = True
-        elif reBound.match(line): bound = False
-    if bound and os.path.isdir(dir + "/checkout"):
-      system(["bzr", "update", bzr])
-    elif parent:
-      system(["bzr", "pull"], cwd = bzr)
-  if os.path.isdir(dir + "/repository"):
-    notWin = platform.system() != "Windows"
-    res = system(["bzr", "check", bzr])
-    if res != 0 and notWin:
-      raise IOError("Invalid bazaar repository %s, result=%s" % (bzr, res))
-    packs = dir + "/repository/packs"
-    if os.path.isdir(packs) and len(os.listdir(packs)) > 1:
-      res = system(["bzr", "pack", bzr])
-      if res != 0 and notWin:
-        raise IOError("Bazaar pack error %s, result=%s" % (bzr, res))
-    dir += "/repository/obsolete_packs"
-    for file in os.listdir(dir):
-      os.remove(dir + '/' + file)
-  return True
-
-def gitVerify(dir):
-  """  Проверяет корректность файлов git-репозиториев
-  Обновляет из svn, перепаковывает """
-  if ".git" != os.path.basename(dir):
-    return False
-  git_repo = os.path.dirname(dir)
-  log.info("git found: %s", git_repo)
-  svn = re.compile(r'^\[svn-remote "(.+)"\]$')
-  config = dir + "/config"
-  log.debug("config=[%s]", config)
-  with open(config, "r") as fd:
-    for line in fd:
-      line = line.rstrip()
-      matcher = svn.match(line)
-      log.debug("match('%s')=%s", line, matcher)
-      if matcher != None:
-        svn_remote = matcher.group(1)
-        log.debug("svn_remote+=%s", svn_remote)
-        system(["git", "svn", "fetch", svn_remote], cwd = git_repo)
-  system(["git", "prune"], cwd = git_repo)
-  dir += "/repository/obsolete_packs"
-  res = system(["git", "fsck", "--full"], cwd = git_repo)
-  if res != 0:
-    raise IOError("Invalid git repository %s, result=%s" % (os.path.dirname(dir), res))
+  for name in files:
+    path = dir + '/' + name
+    if not os.path.isfile(path):
+      return False
   return True
 
 def removeFile(path):
@@ -203,14 +139,6 @@ def system_hidden(command, reader = None, stdin = None, cwd = None):
     pass
   p.wait()
   return res
-
-class RepoVerify:
-  """ Проверяет корректность репозиториев """
-  def __init__(self):
-    self.svn = False
-  def __call__(self, dir):
-    self.svn = is_subversion(dir)
-    return self.svn or bzrVerify(dir) or gitVerify(dir)
 
 class RecoveryEntry:
   """ Файл, подготовленный к восстановлению """
@@ -279,22 +207,19 @@ class SvnSeparator:
 class SvnBackup:
   """ Запускает svnadmin dump для репозиториев Subversion
   Сохраняет в self.md5sums подсчитанные контрольные суммы """
-  def __init__(self, src, dst, hostname, md5sums):
-    self.name = hostname + '-' + os.path.basename(src)
-    self.dst = dst + '/' + hostname + '/' + self.name
-    self.md5sums = md5sums
-    self.length = len(src)
-  def backup(self, src):
-    """ Снимает резервную копию для одиночного репозитория """
-    if not is_subversion(src):
+  def __init__(self, backup):
+    self.md5sums = backup.new_checksum_by_path
+  def found(self, dir):
+    """ Проверяет, что директория - репозиторий Subversion """
+    if not dir_contains(dir, ['conf', 'db', 'hooks', 'locks'], ['format', 'README.txt']):
       return False
-    dst = self.dst
-    prefix = self.name
-    if len(src) > self.length:
-      prefix += src[self.length:].replace('/', '-')
-      dst = self.dst + '/' + prefix
-    log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
+    if not readline(dir + "/README.txt").startswith("This is a Subversion repository;"):
+      return False
+    return True
+  def backup(self, src, dst, prefix):
+    """ Снимает резервную копию для одиночного репозитория """
     mkdirs(dst)
+    log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
     newrev = system(("svn", "info", "file://" + src), readrev)
     md5 = load_md5(dst + "/.md5")[0]
     step = minrev = 100
@@ -327,6 +252,85 @@ class SvnBackup:
       "%d:%d" % (oldrev, newrev), "--incremental", src], \
        GzipMd5sum(path))
 
+class GitBackup:
+  """ Создаёт резервную копию репозитория Git """
+  def __init__(self, backup):
+    self.genericBackup = backup.genericBackup
+    self.upToDate = backup.upToDate
+    self.svn_remote = re.compile(r'^\[svn-remote "(.+)"\]$')
+  def found(self, dir):
+    """ Проверяет, что директория - репозиторий Git """
+    return dir_contains(dir,
+                        ['.git/branches', '.git/hooks', '.git/info',
+                         '.git/objects', '.git/refs'],
+                        ['.git/config', '.git/description', '.git/HEAD']) or dir_contains(dir,
+                        ['branches', 'hooks', 'info', 'objects', 'refs'],
+                        ['config', 'description', 'HEAD'])
+  def backup(self, src, dst, prefix):
+    """ Создаёт резервную копию репозитория Git """
+    if self.upToDate(src, dst):
+      return
+    log.info("git backup: %s", src)
+    config = src + '/.git/config'
+    if not os.path.isfile(config):
+      config = dir + '/config'
+    log.debug("config=[%s]", config)
+    with open(config, "r") as fd:
+      for line in fd:
+        line = line.rstrip()
+        matcher = self.svn_remote.match(line)
+        log.debug("match('%s')=%s", line, matcher)
+        if matcher != None:
+          system(['git', 'svn', 'fetch', '--all'], cwd = src)
+          break
+    system(['git', 'prune'], cwd = src)
+    res = system(['git', 'fsck', '--full'], cwd = src)
+    if res != 0:
+      raise IOError('Invalid git repository %s, result=%s' % (os.path.dirname(src), res))
+    self.genericBackup(src, dst, prefix)
+
+class BzrBackup:
+  """ Создаёт резервную копию репозитория Bzr """
+  def __init__(self, backup):
+    self.genericBackup = backup.genericBackup
+    self.upToDate = backup.upToDate
+    self.reParent = re.compile(r"^parent_location\s*=")
+    self.reBound = re.compile(r"^bound\s*=\s*False")
+  def found(self, dir):
+    """ Проверяет, что директория - репозиторий Git """
+    return dir_contains(dir, ['.bzr'], [])
+  def backup(self, src, dst, prefix):
+    """ Создаёт резервную копию репозитория Bzr """
+    if self.upToDate(src, dst):
+      return
+    log.info("bzr backup: %s", src)
+    conf = src + '/.bzr/branch/branch.conf'
+    if os.path.isfile(conf):
+      parent = False
+      bound = True
+      with open(conf) as f:
+        for line in f:
+          if reParent.match(line): parent = True
+          elif reBound.match(line): bound = False
+      if bound and os.path.isdir(src + ".bzr/checkout"):
+        system(["bzr", "update", src])
+      elif parent:
+        system(["bzr", "pull"], cwd = src)
+    if os.path.isdir(src + "/.bzr/repository"):
+      notWin = platform.system() != "Windows"
+      res = system(["bzr", "check", src])
+      if res != 0 and notWin:
+        raise IOError("Invalid bazaar repository %s, result=%s" % (src, res))
+      packs = src + "/.bzr/repository/packs"
+      if os.path.isdir(packs) and len(os.listdir(packs)) > 1:
+        res = system(["bzr", "pack", src])
+        if res != 0 and notWin:
+          raise IOError("Bazaar pack error %s, result=%s" % (src, res))
+      dir = src + "/.bzr/repository/obsolete_packs"
+      for file in os.listdir(dir):
+        os.remove(dir + '/' + file)
+    self.genericBackup(src, dst, prefix)
+
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
   def __init__(self, srcDirs, destDirs, num, hostname):
@@ -342,6 +346,7 @@ class Backup:
     self.files_checksum_by_dir = dict()
     self.checksum_file = dict()
     self.checked = time.time() - 2 * 24 * 3600
+    self.strategies = (SvnBackup(self), GitBackup(self), BzrBackup(self))
     self.commands = dict() # команды на копирование/удаление файлов разделённые на директории
     for dir in destDirs:
       self.commands[dir] = []
@@ -378,64 +383,78 @@ class Backup:
         command()
   def backup(self, src):
     """ Создаёт резервные копии директории """
-    try:
-      if "" == src:
-        return
-      self.subversion = False
-      self.last_modified = -1
-      through_dirs(src, self.findSubversion, self.lastModified)
-      dst = self.destDirs[0]
-      if self.subversion:
-        svn = SvnBackup(src, dst, self.hostname, self.new_checksum_by_path)
-        through_dirs(src, svn.backup)
-      else:
-        self.genericBackup(src, dst)
-    except Exception, e:
-      log.error("backup error: %s", e)
-      traceback.print_exc()
-  def findSubversion(self, dir):
-    """ Ищет репозитории SVN. Устанавливает self.subversion, если обнаруживает репозиторий Subversion.
-        Устанавливает self.last_modified, если время модификации директории больше. """
+    if "" == src:
+      return
+    self.last_modified = -1
+    self.strategy_by_dir = dict()
+    self.last_found_dir = None
+    through_dirs(src, self.findStrategy, self.lastModified)
+    del self.last_found_dir
+    prefix = self.hostname + '-' + os.path.basename(src)
+    dst = self.destDirs[0] + '/' + self.hostname + '/' + prefix
+    if len(self.strategy_by_dir) == 0:
+      self.safeBackup(None, src, dst, prefix)
+    else:
+      length = len(src)
+      for dir, strategy in self.strategy_by_dir.items():
+        if len(dir) == length:
+          self.safeBackup(strategy, dir, dst, prefix)
+        else:
+          prf = prefix + dir[length:].replace('/', '-')
+          self.safeBackup(strategy, dir, dst + prf, prf)
+  def findStrategy(self, dir):
+    """ Ищет способ резервного копирования.
+        Устанавливает self.last_modified последнее время модификации директории. """
     self.lastModified(dir)
-    self.subversion = self.subversion or is_subversion(dir)
-    return self.subversion
+    if self.last_found_dir != None and dir.startswith(self.last_found_dir):
+      return False
+    for strategy in self.strategies:
+      if strategy.found(dir):
+        self.strategy_by_dir[dir] = strategy
+        self.last_found_dir = dir + '/'
+        return False
+    return False
   def lastModified(self, path):
-    """ Устанавливает self.last_modified, если время модификации файла больше """ 
+    """ Устанавливает self.last_modified последнее время модификации файла. """ 
     time = os.path.getmtime(path)
     if time > self.last_modified:
       self.last_modified = time
-  def genericBackup(self, src, dst):
+  def safeBackup(self, strategy, src, dst, prefix):
+    """ Создаёт одиночную резервную копию. Перехватывает ошибки. """
+    try:
+      if strategy == None:
+        if self.upToDate(src, dst):
+          return
+        self.genericBackup(src, dst, prefix)
+      else:
+        log.debug("strategy.backup('%s', '%s', '%s')", src, dst, prefix)
+        strategy.backup(src, dst, prefix)
+    except Exception, e:
+      log.error("backup error: %s", e)
+      traceback.print_exc()
+  def genericBackup(self, src, dst, prefix):
     """ Полностью архивирует директорию, если не существует актуальной резервной копии """
-    log.debug("genericBackup(%s, %s)", src, dst)
+    log.debug("genericBackup(%s, %s, %s)", src, dst, prefix)
     date = time.strftime("%Y-%m-%d")
-    log.debug("dst = %s", os.path.dirname(src))
     basename = os.path.basename(src)
-    prefix = self.hostname + '-' + basename
-    dir = '/' + self.hostname + '/' + prefix + '/'
-    key = dir + prefix + date + ".tar.gz"
-    dir = dst + dir
-    if self.upToDate(dir):
-      log.info('[%s] is up todate.', src)
-      return
-    through_dirs(src, self.repoVerify)
-    mkdirs(dir)
-    path = dst + key
+    mkdirs(dst)
+    path = dst + '/' + prefix + date + ".tar.gz"
     self.removePair(path) # удаляет устаревший файл
     self.new_checksum_by_path[path] = system(["tar", "cf", "-", basename], \
                                 GzipMd5sum(path), \
                                 cwd = os.path.dirname(src))
+    key = path[len(self.destDirs[0]):]
+    log.debug('key=%s', key)
     for dst in self.destDirs[1:]:
       self.removePair(dst + key)
-  def repoVerify(self, dir):
-    """ Проверяет репозитории bzr и git на наличие ошибок """
-    return bzrVerify(dir) or gitVerify(dir)
-  def upToDate(self, dir):
+  def upToDate(self, src, dst):
     """ Проверяет время создания последнего архива. Возвращает True, если backup не требуется """
-    if not os.path.isdir(dir):
+    dst += '/'
+    if not os.path.isdir(dst):
       return False
     list = []
-    for name in os.listdir(dir):
-      if os.path.isfile(dir + name):
+    for name in os.listdir(dst):
+      if os.path.isfile(dst + name):
         entry, index = self.recoveryEntry(name)
         if index == 0: # TimeSeparator
           log.debug('list.append(%s)', entry)
@@ -443,11 +462,12 @@ class Backup:
     list = self.timeSeparator.separate(list)[0]
     log.debug('list=%s', list)
     if len(list) > 0:
-      path = dir + list[0].name
+      path = dst + list[0].name
       time = os.path.getmtime(path)
       checksum = self.checksum(path)[0]
       log.debug('time[%s]=%s, last_modified=%s, checksum=%s', path, time, self.last_modified, checksum)
       if time > self.last_modified and checksum != None:
+        log.info('[%s] is up to date.', src)
         return True
     return False
   def recoveryDirs(self, key):
