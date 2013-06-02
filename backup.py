@@ -288,7 +288,7 @@ class GitBackup:
     if self.upToDate(src, dst):
       return
     system(['git', 'prune'], cwd = src)
-    res = system(['git', 'fsck', '--full'], cwd = src)
+    res = system(['git', 'fsck', '--full', '--no-progress'], cwd = src)
     if res != 0:
       raise IOError('Invalid git repository %s, result=%s' % (os.path.dirname(src), res))
     self.genericBackup(src, dst, prefix)
