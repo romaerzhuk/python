@@ -2,19 +2,21 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, platform, logging, subprocess
+import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback
 
-def through_dirs(path, filter):
+def through_dirs(path, dirFilter, fileFunctor=None):
   """ Рекурсивно сканирует директории.
   Вызывает для каждой директории фильтр. """
-  if filter(path):
+  if dirFilter(path):
     return
   if path == '.': prefix = ''
   else: prefix = path + '/'
   for i in os.listdir(path):
     s = prefix + i
     if os.path.isdir(s):
-      through_dirs(s, filter)
+      through_dirs(s, dirFilter)
+    elif fileFunctor != None:
+      fileFunctor(s)
 
 class StopWatch:
   """ Засекает время выполнения команды """
@@ -81,7 +83,8 @@ def mkdirs(path):
   if os.path.exists(path):
     return
   mkdirs(os.path.dirname(path))
-  os.mkdir(path)
+  if not os.path.exists(path):
+    os.mkdir(path)
 
 def readline(file):
   """ Возвращает первую строку из файла """
@@ -328,13 +331,16 @@ class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
   def __init__(self, srcDirs, destDirs, num, hostname):
     # набор способов разделить нужные копии от избыточных
-    self.separators = (TimeSeparator(num), SvnSeparator())
+    self.timeSeparator = TimeSeparator(num)
+    self.separators = (self.timeSeparator, SvnSeparator())
     self.srcDirs = srcDirs
     self.destDirs = destDirs
     self.hostname = hostname
     self.dirSet = set()
-    self.md5sums = dict()
-    self.md5cache = (None, None)
+    self.new_checksum_by_path = dict()
+    self.checksum_by_path = dict()
+    self.files_checksum_by_dir = dict()
+    self.checksum_file = dict()
     self.checked = time.time() - 2 * 24 * 3600
     self.commands = dict() # команды на копирование/удаление файлов разделённые на директории
     for dir in destDirs:
@@ -348,7 +354,7 @@ class Backup:
     for src in self.srcDirs:
       self.backup(src)
     dirs = dict()
-    for path in self.md5sums.keys():
+    for path in self.new_checksum_by_path.keys():
       md5path = os.path.dirname(path) + "/.md5"
       lst = dirs.get(md5path)
       if lst == None:
@@ -358,7 +364,7 @@ class Backup:
       md5 = load_md5(md5path)[0]
       for path in lst:
         name = os.path.basename(path)
-        md5[name] = self.md5sums[path]
+        md5[name] = self.new_checksum_by_path[path]
       with open(md5path, "wb") as fd:
         names = list(md5.keys())
         names.sort()
@@ -376,38 +382,74 @@ class Backup:
       if "" == src:
         return
       self.subversion = False
-      through_dirs(src, self.repoVerify)
+      self.last_modified = -1
+      through_dirs(src, self.findSubversion, self.lastModified)
       dst = self.destDirs[0]
       if self.subversion:
-        svn = SvnBackup(src, dst, self.hostname, self.md5sums)
+        svn = SvnBackup(src, dst, self.hostname, self.new_checksum_by_path)
         through_dirs(src, svn.backup)
       else:
-        self.generic_backup(src, dst)
+        self.genericBackup(src, dst)
     except Exception, e:
       log.error("backup error: %s", e)
-  def repoVerify(self, dir):
-    """ Проверяет корректность репозиториев.
-    Устанавливает self.subversion, если обнаруживает репозиторий Subversion-а"""
+      traceback.print_exc()
+  def findSubversion(self, dir):
+    """ Ищет репозитории SVN. Устанавливает self.subversion, если обнаруживает репозиторий Subversion.
+        Устанавливает self.last_modified, если время модификации директории больше. """
+    self.lastModified(dir)
     self.subversion = self.subversion or is_subversion(dir)
-    return self.subversion or bzrVerify(dir) or gitVerify(dir)
-  def generic_backup(self, src, dst):
-    """ Полностью архивирует директорию """
-    log.debug("generic_backup(%s, %s)", src, dst)
+    return self.subversion
+  def lastModified(self, path):
+    """ Устанавливает self.last_modified, если время модификации файла больше """ 
+    time = os.path.getmtime(path)
+    if time > self.last_modified:
+      self.last_modified = time
+  def genericBackup(self, src, dst):
+    """ Полностью архивирует директорию, если не существует актуальной резервной копии """
+    log.debug("genericBackup(%s, %s)", src, dst)
     date = time.strftime("%Y-%m-%d")
     log.debug("dst = %s", os.path.dirname(src))
     basename = os.path.basename(src)
-    dir = '/' + self.hostname + '/' + self.hostname + '-' + basename
-    name = self.hostname + '-' + basename + date + ".tar.gz"
-    key = dir + '/' + name
+    prefix = self.hostname + '-' + basename
+    dir = '/' + self.hostname + '/' + prefix + '/'
+    key = dir + prefix + date + ".tar.gz"
     dir = dst + dir
+    if self.upToDate(dir):
+      log.info('[%s] is up todate.', src)
+      return
+    through_dirs(src, self.repoVerify)
     mkdirs(dir)
     path = dst + key
     self.removePair(path) # удаляет устаревший файл
-    self.md5sums[path] = system(["tar", "cf", "-", basename], \
+    self.new_checksum_by_path[path] = system(["tar", "cf", "-", basename], \
                                 GzipMd5sum(path), \
                                 cwd = os.path.dirname(src))
     for dst in self.destDirs[1:]:
       self.removePair(dst + key)
+  def repoVerify(self, dir):
+    """ Проверяет репозитории bzr и git на наличие ошибок """
+    return bzrVerify(dir) or gitVerify(dir)
+  def upToDate(self, dir):
+    """ Проверяет время создания последнего архива. Возвращает True, если backup не требуется """
+    if not os.path.isdir(dir):
+      return False
+    list = []
+    for name in os.listdir(dir):
+      if os.path.isfile(dir + name):
+        entry, index = self.recoveryEntry(name)
+        if index == 0: # TimeSeparator
+          log.debug('list.append(%s)', entry)
+          list.append(entry)
+    list = self.timeSeparator.separate(list)[0]
+    log.debug('list=%s', list)
+    if len(list) > 0:
+      path = dir + list[0].name
+      time = os.path.getmtime(path)
+      checksum = self.checksum(path)[0]
+      log.debug('time[%s]=%s, last_modified=%s, checksum=%s', path, time, self.last_modified, checksum)
+      if time > self.last_modified and checksum != None:
+        return True
+    return False
   def recoveryDirs(self, key):
     """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
     Удаляет устаревшие копии """
@@ -432,27 +474,22 @@ class Backup:
             if name != ".md5":
               md5dirs.add(dst)
           elif not name in fileDict:
-            fileDict[name] = entry = RecoveryEntry(name)
-            found = False
-            for i in xrange(len(self.separators)):
-              separator = self.separators[i]
-              matcher = separator.pattern.match(name)
-              if matcher != None:
-                separator.init(entry, matcher)
-                lists[i].append(entry)
-                found = True
-                break
-            if not found:
+            entry, index = self.recoveryEntry(name)
+            fileDict[name] = entry          
+            if index < 0:
               log.debug('recovery.append(%s)', name)
               recovery.append(entry)
+            else:
+              log.debug('lists[%s].append(%s)', index, name)
+              lists[index].append(entry)
     if len(fileDict) == 0:
       return
     for (name, entry) in fileDict.items():
       for dst in self.destDirs:
         path = dst + key + '/' + name
-        md5 = self.md5sums.get(path)
+        md5 = self.new_checksum_by_path.get(path)
         if md5 == None:
-          md5, real = self.correct(dst, path)
+          md5, real = self.checksum(path, dst == self.destDirs[0])
           if real:
             md5dirs.add(dst)
         else:
@@ -485,6 +522,16 @@ class Backup:
         self.lazyRemovePair(dst, key + '/' + f.name)
     for dst in md5dirs:
       self.lazyWriteMd5(dst, key, md5files)
+  def recoveryEntry(self, name):
+    """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """ 
+    entry = RecoveryEntry(name)
+    for i in xrange(len(self.separators)):
+      separator = self.separators[i]
+      matcher = separator.pattern.match(name)
+      if matcher != None:
+        separator.init(entry, matcher)
+        return entry, i
+    return entry, -1
   def lazyCopy(self, src, dst, key):
     """ Выполняет отложенное копирование файла """ 
     if dst != self.destDirs[0]:
@@ -522,7 +569,7 @@ class Backup:
         if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
           removeFile(path)
     except Exception, e:
-      log.error("md5sums error: %s", e)
+      log.error("new_checksum_by_path error: %s", e)
   def removePair(self, path):
     """ Удаляет файл и контрольную сумму """
     if os.path.isfile(path):
@@ -547,32 +594,42 @@ class Backup:
       log.error("copy error: %s", e)
     finally:
       sw.stop()
-  def correct(self, dst, path):
+  def checksum(self, path, real_only = True):
     """ Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
-       и флаг, что сумма была вычислена, а не взята из файла """
+        и флаг, что сумма была вычислена, а не взята из файла """
     try:
-      if os.path.isfile(path):
-        dir = os.path.dirname(path) + '/'
-        name = os.path.basename(path)
-        if dir == self.md5cache[0]:
-          lines = self.md5cache[1]
-          time = self.md5cache[2]
-        else:
-          lines, time = load_md5(dir + ".md5") # контрольные суммы всех файлов директории
-          self.md5cache = (dir, lines, time)
-        stored = lines.get(name)
-        if stored == None:
-          lines, time = load_md5(dir + name + ".md5") # устаревший файл
-          stored = lines.get(name)
-        if stored != None:
-          if dst != self.destDirs[0] and self.checked < time:
-            return stored, False
-          real = md5sum(path)
-          if stored == real:
-            return stored, True
+      stored, time = self.storedChecksum(path)
+      if time == None or not real_only and self.checked < time:
+        return (stored, False)
+      real = md5sum(path)
+      if stored != real:
+        stored = None
+      self.checksum_by_path[path] = (stored, None)
+      return (stored, True)
     except Exception, e:
-      log.error("md5sums check error: %s", e)
-    return None, False
+      log.error("new_checksum_by_path check error: %s", e)
+      self.checksum_by_path[path] = (None, None)
+      return (None, False)
+  def storedChecksum(self, path):
+    """ Возвращает контрольную сумму из файла и время расчёта контрольной суммы """
+    result = self.checksum_by_path.get(path)
+    if result != None:
+      return result
+    if not os.path.isfile(path):
+       self.checksum_by_path[path] = result = (None, None)
+       return result
+    dir = os.path.dirname(path) + '/'
+    lines, time = self.checksumFiles(dir)
+    name = os.path.basename(path)
+    stored = lines.get(name)
+    self.checksum_by_path[path] = result = (stored, time)
+    return result
+  def checksumFiles(self, dir):
+    """ Возвращает контрольные суммы директории из файла .md5 """
+    result = self.files_checksum_by_dir.get(dir)
+    if result == None:
+      self.files_checksum_by_dir[dir] = result = load_md5(dir + ".md5") 
+    return result
 
 def readrev(stdout):
   """ Читает номер ревизии Subversion из стандартного вывода """
