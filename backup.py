@@ -258,19 +258,17 @@ class GitBackup:
     self.genericBackup = backup.genericBackup
     self.upToDate = backup.upToDate
     self.svn_remote = re.compile(r'^\[svn-remote "(.+)"\]$')
-  def found(self, dir):
+  def found(self, src):
     """ Проверяет, что директория - репозиторий Git """
-    return dir_contains(dir,
+    found = dir_contains(src,
                         ['.git/branches', '.git/hooks', '.git/info',
                          '.git/objects', '.git/refs'],
-                        ['.git/config', '.git/description', '.git/HEAD']) or dir_contains(dir,
+                        ['.git/config', '.git/description', '.git/HEAD']) or dir_contains(src,
                         ['branches', 'hooks', 'info', 'objects', 'refs'],
                         ['config', 'description', 'HEAD'])
-  def backup(self, src, dst, prefix):
-    """ Создаёт резервную копию репозитория Git """
-    if self.upToDate(src, dst):
-      return
-    log.info("git backup: %s", src)
+    if not found:
+      return False
+    log.info("git found: %s", src)
     config = src + '/.git/config'
     if not os.path.isfile(config):
       config = src + '/config'
@@ -284,6 +282,11 @@ class GitBackup:
         if matcher != None:
           system(['git', 'svn', 'fetch', '--all'], cwd = src)
           break
+    return True
+  def backup(self, src, dst, prefix):
+    """ Создаёт резервную копию репозитория Git """
+    if self.upToDate(src, dst):
+      return
     system(['git', 'prune'], cwd = src)
     res = system(['git', 'fsck', '--full'], cwd = src)
     if res != 0:
