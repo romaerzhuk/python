@@ -275,6 +275,7 @@ class GitBackup:
     if not os.path.isfile(config):
       config = src + '/config'
     log.debug("config=[%s]", config)
+    system(['git', 'fetch', '--all'], cwd = src)
     with open(config, "r") as fd:
       for line in fd:
         line = line.rstrip()
