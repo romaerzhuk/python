@@ -263,6 +263,7 @@ class GitBackup:
   def found(self, src):
     """ Проверяет, что директория - репозиторий Git """
     found = dir_contains(src, ['.git'], [])
+    git = src
     if found:
       src += '/.git'
     else:
@@ -271,7 +272,7 @@ class GitBackup:
                            ['config', 'description', 'HEAD'])
     if not found:
       return False
-    log.info("git found: %s", src)
+    log.info("git found: %s", git)
     config = src + '/config'
     log.debug("config=[%s]", config)
     remote = svn_remote = False
