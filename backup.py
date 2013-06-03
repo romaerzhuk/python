@@ -295,9 +295,10 @@ class GitBackup:
   def backup(self, src, dst, prefix):
     """ Создаёт резервную копию репозитория Git """
     if dir_contains(src, ['.git'], []):
-      self.exclude = src + '/.git/svn'
+      git = src + '/.git'
     else:
-      self.exclude = src + '/svn'
+      git = src
+    self.exclude = set([git + '/svn', git + 'FETCH_HEAD'])
     through_dirs(src, self.lastModified, self.lastModified)
     if self.upToDate(src, dst):
       return
@@ -308,7 +309,7 @@ class GitBackup:
     self.genericBackup(src, dst, prefix)
   def lastModified(self, path):
     """ Запоминает время последней модификации файлов """
-    if self.exclude == path:
+    if path in self.exclude:
       return True
     self.lastModified(path)
     return False
