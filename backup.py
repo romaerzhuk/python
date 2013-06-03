@@ -298,8 +298,8 @@ class GitBackup:
       git = src + '/.git'
     else:
       git = src
-    self.exclude = set([git + '/svn', git + 'FETCH_HEAD'])
-    through_dirs(src, self.lastModified, self.lastModified)
+    self.excludes = set([git + '/svn', git + '/FETCH_HEAD'])
+    through_dirs(src, self.lastModifiedWithExcludes, self.lastModifiedWithExcludes)
     if self.upToDate(src, dst):
       return
     system(['git', 'prune'], cwd = src)
@@ -307,9 +307,9 @@ class GitBackup:
     if res != 0:
       raise IOError('Invalid git repository %s, result=%s' % (os.path.dirname(src), res))
     self.genericBackup(src, dst, prefix)
-  def lastModified(self, path):
+  def lastModifiedWithExcludes(self, path):
     """ Запоминает время последней модификации файлов """
-    if path in self.exclude:
+    if path in self.excludes:
       return True
     self.lastModified(path)
     return False
