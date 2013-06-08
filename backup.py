@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback
+import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback, inspect
 
 def through_dirs(path, dirFilter, fileFunctor=None):
   """ Рекурсивно сканирует директории.
@@ -287,7 +287,7 @@ class GitBackup:
           remote, commmad = remotes[key]
           matcher = remote.match(line)
           if matcher != None:
-            log.debug("match('%s')=%s", line, matcher)
+            log.debug("match('%s')=%s", line, matcher.group(1))
             commmad()
             del remotes[key]
             if len(remotes) == 0:
@@ -515,15 +515,22 @@ class Backup:
     lists, recovery, remove = ([], []), [], []
     fileDict = dict()
     md5dirs = set()
+    log.debug('for dst in %s', self.destDirs)
     for dst in self.destDirs:
+      log.debug('for dst=%s in %s', dst, self.destDirs)
       path = dst + key
       if not os.path.isdir(path):
+        log.debug('continue')
         continue
+      log.debug('for name in %s', os.listdir(path))
       for name in os.listdir(path):
+        log.debug('for name=%s in os.listdir.path(%s)', name, path)
         k = key + '/' + name
         path = dst + k
         if os.path.isdir(path):
+          log.debug('enter into self.recoveryDirs(%s)', k)
           self.recoveryDirs(k)
+          log.debug('leave from self.recoveryDirs(%s)', k)
         elif os.path.isfile(path):
           if name.endswith(".md5"):
             if name != ".md5":
@@ -539,7 +546,9 @@ class Backup:
               lists[index].append(entry)
     if len(fileDict) == 0:
       return
+    log.debug('for (name, entry) in in %s', fileDict)
     for (name, entry) in fileDict.items():
+      log.debug(' for (name=%s, entry=%s) in in %s', name, entry, fileDict)
       for dst in self.destDirs:
         path = dst + key + '/' + name
         md5 = self.new_checksum_by_path.get(path)
@@ -556,6 +565,7 @@ class Backup:
           if entry.dir == None:
             entry.dir = dst
           entry.md5[dst] = md5
+    log.debug('for i in in xrange=%s', xrange(len(self.separators)))
     for i in xrange(len(self.separators)):
       rec, old = self.separators[i].separate(lists[i])
       recovery += rec
@@ -726,6 +736,7 @@ def main_backup():
   logging.basicConfig(level = logging.INFO, \
                       stream = sys.stdout, \
                       format = "%(message)s")
+                      #format = "%(levelname)5s %(lineno)3d %(message)s")
   sw = StopWatch("backup")
   command = arg(1)
   if "full" == command:
@@ -737,6 +748,10 @@ def main_backup():
   else:
     help()
   sw.stop()
+
+def lineno():
+    """Returns the current line number in our program."""
+    return inspect.currentframe().f_back.f_lineno
 
 if __name__ == '__main__':
   main_backup()
