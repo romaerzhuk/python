@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback, inspect
+import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback
 
 def through_dirs(path, dirFilter, fileFunctor=None):
   """ Рекурсивно сканирует директории.
@@ -748,10 +748,6 @@ def main_backup():
   else:
     help()
   sw.stop()
-
-def lineno():
-    """Returns the current line number in our program."""
-    return inspect.currentframe().f_back.f_lineno
 
 if __name__ == '__main__':
   main_backup()
