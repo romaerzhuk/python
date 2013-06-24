@@ -1,7 +1,14 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 from __future__ import with_statement
-import sys, os, re, platform, logging, subprocess
+import sys, os, re, platform, logging, subprocess, traceback
+
+class ProcessError(Exception):
+  """ Ошибка выполнения процесса """
+  def __init__(self, command, code):
+    self.message = '%s: %s' % (command, code)
+  def __str__(self):
+    return self.message
 
 def system(command, reader = None, stdin = sys.stdin, cwd = None):
   """ Запускает процесс.
@@ -22,7 +29,8 @@ def system(command, reader = None, stdin = sys.stdin, cwd = None):
     # дочитывает стандартный вывод, если что-то осталось
     for line in p.stdout:
       pass
-  p.wait()
+  if p.wait() != 0:
+    raise ProcessError(command, p.returncode)
   return res
 
 class Main:
@@ -31,7 +39,7 @@ class Main:
        Предопределены псевдонимы:
          - root: - корневая директория проекта;
          - url: - URL текущей ветки проекта. """
-    logging.basicConfig(level = logging.INFO, \
+    logging.basicConfig(level = logging.DEBUG, \
                         stream = sys.stdout, \
                         format = '%(message)s')
     self.svn = sys.argv[1]
@@ -76,16 +84,19 @@ class Main:
       svn = '.svn'
       url = None
       while True:
-        if not os.path.isdir(svn) \
-		or (url != None and \
-                not (url.startswith(self.url()) and self.url()[len(url)+1:].find('/') < 0)):
+        log.debug('url=%s, svn=%s, self.url()=%s', url, svn, self.url())
+        ok = url == None or url.startswith(self.url()) and self.url()[len(url)+1:].find('/') >= 0
+        if ok:
+          try:
+            system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
+          except ProcessError:
+            ok = False
+        if not ok:
           self.root = ''
           self.url_val = None
           self.aliases = dict()
           log.debug('svn pg aliases: not found. Using root=%s', self.root)
           break
-        url = self.url()
-        system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
         if len(self.aliases) > 0:
           log.debug('svn pg aliases: found. Using root=%s', self.root)
           break
@@ -137,4 +148,8 @@ class Main:
 
 if __name__ == '__main__':
   log = logging.getLogger('svn')
-  Main()
+  try:
+    Main()
+  except Exception, e:
+    log.error("svn.py error: %s", e)
+    traceback.print_exc()
