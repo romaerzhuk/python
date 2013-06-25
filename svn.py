@@ -86,6 +86,7 @@ class Main:
         if len(self.aliases) > 0:
           log.debug('svn pg aliases: found. Using root=%s', self.root)
           break
+        url = self.url()
         if self.root == '':
           self.root = '..'
         else:
