@@ -3,17 +3,10 @@
 from __future__ import with_statement
 import sys, os, re, platform, logging, subprocess, traceback
 
-class ProcessError(Exception):
-  """ Ошибка выполнения процесса """
-  def __init__(self, command, code):
-    self.message = '%s: %s' % (command, code)
-  def __str__(self):
-    return self.message
-
 def system(command, reader = None, stdin = sys.stdin, cwd = None):
   """ Запускает процесс.
   Вызывает процедуру для чтения стандартного вывода.
-  Возвращает результат процедуры """
+  Возвращает (код ошибки, результат процедуры) """
   if reader == None:
     stdout, res = sys.stdout, None
   else:
@@ -29,9 +22,8 @@ def system(command, reader = None, stdin = sys.stdin, cwd = None):
     # дочитывает стандартный вывод, если что-то осталось
     for line in p.stdout:
       pass
-  if p.wait() != 0:
-    raise ProcessError(command, p.returncode)
-  return res
+  p.wait()
+  return p.returncode, res
 
 class Main:
   def __init__(self):
@@ -39,7 +31,7 @@ class Main:
        Предопределены псевдонимы:
          - root: - корневая директория проекта;
          - url: - URL текущей ветки проекта. """
-    logging.basicConfig(level = logging.DEBUG, \
+    logging.basicConfig(level = logging.INFO, \
                         stream = sys.stdout, \
                         format = '%(message)s')
     self.svn = sys.argv[1]
@@ -84,13 +76,8 @@ class Main:
       url = None
       while True:
         log.debug('url=%s, self.url()=%s', url, self.url())
-        ok = url == None or url.startswith(self.url()) and self.url()[len(url)+1:].find('/') >= 0
-        if ok:
-          try:
-            system([self.svn, 'pg', 'aliases', self.root], self.read_alias)
-          except ProcessError:
-            ok = False
-        if not ok:
+        if url != None and url.startswith(self.url()) and self.url()[len(url)+1:].find('/') >= 0 \
+           or system([self.svn, 'pg', 'aliases', self.root], self.read_alias)[0] != 0:
           self.root = ''
           self.url_val = None
           self.aliases = dict()
@@ -121,7 +108,12 @@ class Main:
       command = [self.svn, 'info']
       if self.root != '':
         command.append(self.root)
-      self.url_val = system(command, self.read_url)
+      code, self.url_val = system(command, self.read_url)
+      if code != 0:
+        sys.exit(1)
+      if self.url_val == None:
+        log.error('URL not found')
+        sys.exit(1)
       log.debug('URL: %s', self.url_val)
     return self.url_val
   def read_alias(self, stdout):
@@ -141,8 +133,7 @@ class Main:
       m = pattern.match(line)
       if m != None:
         return m.group(1)
-    log.error('URL not found')
-    sys.exit()
+    return None
 
 if __name__ == '__main__':
   log = logging.getLogger('svn')
