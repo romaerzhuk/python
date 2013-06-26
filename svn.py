@@ -76,7 +76,7 @@ class Main:
       url = None
       while True:
         log.debug('url=%s, self.url()=%s', url, self.url())
-        if url != None and url.startswith(self.url()) and self.url()[len(url)+1:].find('/') >= 0 \
+        if url != None and not url.startswith(self.url() + '/') \
            or system([self.svn, 'pg', 'aliases', self.root], self.read_alias)[0] != 0:
           self.root = ''
           self.url_val = None
