@@ -3,26 +3,28 @@
 from __future__ import with_statement
 import sys, os, re, platform, logging, subprocess, traceback
 
-def system(command, reader = None, stdin = sys.stdin, cwd = None):
+def system(command, reader=None, stdin=None, stderr=None, cwd=None):
   """ Запускает процесс.
   Вызывает процедуру для чтения стандартного вывода.
   Возвращает (код ошибки, результат процедуры) """
+  log.debug('system %s, stderr=%s...', command, stderr)
   if reader == None:
     stdout, res = sys.stdout, None
   else:
     stdout = subprocess.PIPE
   try:
-    p = subprocess.Popen(command, stdout = stdout, stdin = stdin, stderr = sys.stderr, cwd = cwd)
+    p = subprocess.Popen(command, stdout=stdout, stdin=stdin, stderr=stderr, cwd=cwd)
   except Exception, e:
     if platform.system() != 'Windows':
       raise e
-    p = subprocess.Popen(['cmd.exe', '/c'] + command, stdout = stdout, stdin = stdin, stderr = sys.stderr, cwd = cwd)
+    p = subprocess.Popen(['cmd.exe', '/c'] + command, stdout=stdout, stdin=stdin, stderr=stderr, cwd=cwd)
   if reader != None:
     res = reader(p.stdout)
     # дочитывает стандартный вывод, если что-то осталось
     for line in p.stdout:
       pass
   p.wait()
+  log.debug('system %s=(%s, %s)', command, p.returncode, res)
   return p.returncode, res
 
 class Main:
@@ -74,25 +76,26 @@ class Main:
     if self.aliases == None:
       log.debug('alias(%s)', name)
       url = None
-      while True:
-        log.debug('url=%s, self.url()=%s', url, self.url())
-        if url != None and not url.startswith(self.url() + '/') \
-           or system([self.svn, 'pg', 'aliases', self.root], self.read_alias)[0] != 0:
-          self.root = ''
+      with open(os.devnull, 'w') as devnull:
+        while True:
+          log.debug('url=%s, self.url(%s)=%s ', url, devnull, self.url(devnull))
+          if url != None and not url.startswith(self.url(devnull) + '/') \
+             or system([self.svn, 'pg', 'aliases', self.root], self.read_alias, stderr=devnull)[0] != 0:
+            self.root = ''
+            self.url_val = None
+            self.aliases = dict()
+            log.debug('svn pg aliases: not found. Using root=%s', self.root)
+            break
+          if len(self.aliases) > 0:
+            log.debug('svn pg aliases: found. Using root=%s', self.root)
+            break
+          url = self.url(devnull)
+          if self.root == '':
+            self.root = '..'
+          else:
+            self.root = '../' + self.root
+          log.debug('svn pg aliases: not found. Search from %s', self.root)
           self.url_val = None
-          self.aliases = dict()
-          log.debug('svn pg aliases: not found. Using root=%s', self.root)
-          break
-        if len(self.aliases) > 0:
-          log.debug('svn pg aliases: found. Using root=%s', self.root)
-          break
-        url = self.url()
-        if self.root == '':
-          self.root = '..'
-        else:
-          self.root = '../' + self.root
-        log.debug('svn pg aliases: not found. Search from %s', self.root)
-        self.url_val = None
     if 'root' == name:
       return self.root
     if 'url' == name:
@@ -103,13 +106,13 @@ class Main:
     if self.url_val == None:
       self.url_val = self.url()
     return self.url_val
-  def url(self):
+  def url(self, stderr):
     """ Возвращает URL """
     if self.url_val == None:
       command = [self.svn, 'info']
       if self.root != '':
         command.append(self.root)
-      code, self.url_val = system(command, self.read_url)
+      code, self.url_val = system(command, self.read_url, stderr=stderr)
       if code != 0:
         sys.exit(1)
       if self.url_val == None:
