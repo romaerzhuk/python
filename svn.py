@@ -113,11 +113,8 @@ class Main:
       if self.root != '':
         command.append(self.root)
       code, self.url_val = system(command, self.read_url, stderr=stderr)
-      if code != 0:
-        sys.exit(1)
-      if self.url_val == None:
-        log.error('URL not found')
-        sys.exit(1)
+      if code != 0 or self.url_val == None:
+	return None
       log.debug('URL: %s', self.url_val)
     return self.url_val
   def read_alias(self, stdout):
