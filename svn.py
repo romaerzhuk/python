@@ -79,7 +79,7 @@ class Main:
       with open(os.devnull, 'w') as devnull:
         while True:
           log.debug('url=%s, self.url(%s)=%s ', url, devnull, self.url(devnull))
-          if url != None and not url.startswith(self.url(devnull) + '/') \
+          if url != None and self.url(devnull) != None and not url.startswith(self.url(devnull) + '/') \
              or system([self.svn, 'pg', 'aliases', self.root], self.read_alias, stderr=devnull)[0] != 0:
             self.root = ''
             self.url_val = None
