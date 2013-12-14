@@ -269,7 +269,7 @@ class GitBackup:
     else:
       found = dir_contains(src,
                            ['branches', 'hooks', 'info', 'objects', 'refs'],
-                           ['config', 'description', 'HEAD'])
+                           ['config', 'HEAD'])
     if not found:
       return False
     log.info("git found: %s", git)
