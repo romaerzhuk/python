@@ -13,7 +13,7 @@ def through_dirs(path, dirFilter, fileFunctor=None):
   else: prefix = path + '/'
   for i in os.listdir(path):
     s = prefix + i
-    if os.path.isdir(s):
+    if os.path.isdir(os.path.realpath(s)):
       through_dirs(s, dirFilter, fileFunctor)
     elif fileFunctor != None:
       fileFunctor(s)
