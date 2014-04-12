@@ -299,7 +299,7 @@ class GitBackup:
       git = src + '/.git'
     else:
       git = src
-    self.excludes = set([git + '/svn', git + '/FETCH_HEAD', git + '/subgit'])
+    self.excludes = set([git + '/svn', git + '/FETCH_HEAD', git + '/subgit', git + '/refs/svn/map'])
     through_dirs(src, self.lastModifiedWithExcludes, self.lastModifiedWithExcludes)
     if self.upToDate(src, dst):
       return
@@ -478,6 +478,8 @@ class Backup:
       self.removePair(dst + key)
   def lastModified(self, path):
     """ Устанавливает self.last_modified последнее время модификации файла. """ 
+    if not os.path.isfile(path):
+      return
     modified = os.path.getmtime(path)
     if modified > self.last_modified:
       log.debug('lastModified %s %s', modified, path)
