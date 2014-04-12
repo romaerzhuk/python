@@ -299,7 +299,7 @@ class GitBackup:
       git = src + '/.git'
     else:
       git = src
-    self.excludes = set([git + '/svn', git + '/FETCH_HEAD'])
+    self.excludes = set([git + '/svn', git + '/FETCH_HEAD', git + '/subgit'])
     through_dirs(src, self.lastModifiedWithExcludes, self.lastModifiedWithExcludes)
     if self.upToDate(src, dst):
       return
