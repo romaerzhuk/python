@@ -739,6 +739,7 @@ def main_backup():
                       stream = sys.stdout, \
                       format = "%(message)s")
                       #format = "%(levelname)5s %(lineno)3d %(message)s")
+  sys.setrecursionlimit(100)
   sw = StopWatch("backup")
   command = arg(1)
   if "full" == command:
