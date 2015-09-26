@@ -1,8 +1,9 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf8 -*-
 
 from __future__ import with_statement
-import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback
+import sys, os, re, time, hashlib, socket, platform, logging, subprocess, traceback, smtplib, json, functools
+from email.mime.text import MIMEText
 
 def through_dirs(path, dirFilter, fileFunctor=None):
   """ Рекурсивно сканирует директории.
@@ -59,7 +60,7 @@ def write_md5(file, md5sum, name):
   md5sum - сумма, в 16-ричном виде 
   name   - имя файла
   """
-  file.write("%s\t*%s\n" % (md5sum, name))
+  file.write(bytes("%s\t*%s\n" % (md5sum, name), 'UTF-8'))
 
 def load_md5(path):
   """ Возвращает множество контрольных сумм из файла и время модификации (dict, time) """
@@ -69,7 +70,7 @@ def load_md5(path):
     time = -1
   else:
     time = os.path.getmtime(path)
-    with open(path, "r") as fd:
+    with open(path, encoding='UTF-8') as fd:
       for line in fd:
         m = pattern.match(line)
         if m != None:
@@ -88,7 +89,7 @@ def mkdirs(path):
 
 def readline(file):
   """ Возвращает первую строку из файла """
-  with open(file, "r") as fd:
+  with open(file, encoding='UTF-8') as fd:
     return fd.readline()
 
 def dir_contains(dir, dirs, files):
@@ -125,13 +126,13 @@ def system_hidden(command, reader = None, stdin = None, cwd = None):
   Возвращает результат процедуры """
   try:
     p = subprocess.Popen(command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
-  except Exception, e:
+  except Exception as e:
     if platform.system() != "Windows":
       raise e
     p = subprocess.Popen(["cmd.exe", "/c"] + command, stdout = subprocess.PIPE, stdin = stdin, cwd = cwd)
   if reader == None:
     for line in p.stdout:
-      print line.rstrip()
+      print(line.rstrip())
     return p.wait()
   res = reader(p.stdout)
   # дочитывает стандартный вывод, если что-то осталось
@@ -160,7 +161,7 @@ class TimeSeparator:
     entry.date = matcher.group(1)
   def separate(self, list):
     """ Сортирует список по времени в обратном порядке, оставляет первые self.num элементов """
-    list.sort(self.cmp)
+    list.sort(key=functools.cmp_to_key(self.cmp))
     return list[:self.num], list[self.num:]
   def cmp(self, e1, e2):
     """ Сравнивает файлы по дате: e1.date <= e2.date """
@@ -182,14 +183,14 @@ class SvnSeparator:
     entry.stop = int(matcher.group(3))
   def separate(self, list):
     """ Разделяет перекрывающиеся диапазоны ревизий """
-    list.sort(self.cmp)
+    list.sort(key=functools.cmp_to_key(self.cmp))
     recovery, remove = [], []
-    for i in xrange(len(list)):
+    for i in range(len(list)):
       ei = list[i]
       if ei.recovery:
         recovery.append(ei)
         if ei.dir != None:
-          for j in xrange(i + 1, len(list)):
+          for j in range(i + 1, len(list)):
             ej = list[j]
             if ej.recovery and ei.stop >= ej.stop:
               ej.recovery = False
@@ -280,18 +281,19 @@ class GitBackup:
                           lambda: system(['git',  'fetch', '--all'], cwd = src)),
                'svn_remote': (self.svn_remote,
                               lambda: system(['git', 'svn', 'fetch', '--all'], cwd = src))}
-    with open(config, "r") as fd:
+    with open(config, encoding='UTF-8') as fd:
       for line in fd:
         line = line.rstrip()
+        fetched = set()
         for key in remotes.keys():
           remote, commmad = remotes[key]
+          if remote in fetched:
+            continue
+          fetched.add(remote)
           matcher = remote.match(line)
           if matcher != None:
             log.debug("match('%s')=%s", line, matcher.group(1))
             commmad()
-            del remotes[key]
-            if len(remotes) == 0:
-              return True
     return True
   def backup(self, src, dst, prefix):
     """ Создаёт резервную копию репозитория Git """
@@ -315,79 +317,94 @@ class GitBackup:
     self.lastModified(path)
     return False
 
-class BzrBackup:
-  """ Создаёт резервную копию репозитория Bzr """
-  def __init__(self, backup):
-    self.genericBackup = backup.genericBackup
-    self.lastModified = backup.lastModified
-    self.upToDate = backup.upToDate
-    self.reParent = re.compile(r"^parent_location\s*=")
-    self.reBound = re.compile(r"^bound\s*=\s*False")
-  def found(self, src):
-    """ Проверяет, что директория - репозиторий Bzr """
-    if not dir_contains(src, ['.bzr'], []):
-      return False
-    log.info("bzr found: %s", src)
-    through_dirs(src, self.update)
-    return True
-  def backup(self, src, dst, prefix):
-    """ Создаёт резервную копию репозитория Bzr """
-    through_dirs(src, self.lastModifiedIgnoreLock, self.lastModified)
-    if self.upToDate(src, dst):
-      return
-    win = platform.system() == "Windows"
-    res = system(["bzr", "check", src])
-    if res != 0 and not win:
-      raise IOError("Invalid bazaar repository %s, result=%s" % (src, res))
-    dir = src + "/.bzr/repository/obsolete_packs"
-    for file in os.listdir(dir):
-      os.remove(dir + '/' + file)
-    self.genericBackup(src, dst, prefix)
-  def update(self, src):
-    """ Обновляет репозиторий Bzr """
-    if os.path.basename(src) == '.bzr':
-      return True
-    if not dir_contains(src, ['.bzr'], []):
-      return False
-    conf = src + '/.bzr/branch/branch.conf'
-    if not os.path.isfile(conf):
-      return False
-    parent = False
-    bound = True
-    with open(conf) as f:
-      for line in f:
-        if self.reParent.match(line): parent = True
-        elif self.reBound.match(line): bound = False
-    if bound and os.path.isdir(src + "/.bzr/checkout"):
-      system(["bzr", "update", src])
-    elif parent:
-      system(["bzr", "pull"], cwd = src)
-    return True
-  def lastModifiedIgnoreLock(self, path):
-    """ Игнорирует lock при вычислении времени модификации репозитория """
-    if path.endswith('/.bzr/branch/lock') or path.endswith('/.bzr/checkout/lock'):
-      return
-    self.lastModified(path)
-
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
-  def __init__(self, srcDirs, destDirs, num, hostname):
+  def help(self):
+    """ Выводит справку об использовании """
+    print("Usage: backup.py command [options]")
+    print("\ncommands:")
+    print("\tfull srcDirs destDirs numberOfFiles -- dumps, clones and checks md5 sums")
+    print("\tdump srcDirs destDirs [-h hostname] -- dumps source directories and writes md5 check sums")
+    print("\tclone destDirs numberOfFiles-- checks md5 sums and clone archived files")
+    print("\nExamples:")
+    print("\tbackup.py full $HOME/src /local/backup,/remote/backup 3")
+    print("\tbackup.py dump $HOME/src,$HOME/bin /var/backup")
+    print("\tbackup.py clone /local/backup,/remote/backup2 5")
+    print()
+    print("Optional config file $HOME/.config/backup/backup.cfg:")
+    print("{")
+    print('  "hostname": "myhost",')
+    print('  "smtp_host": "smtp.mail.ru",')
+    print('  "smtp_port": 425,')
+    print('  "smtp_user": "user",')
+    print('  "smtp_password": "password",')
+    print('  "fromaddr": "backup@mail.ru",')
+    print('  "toaddrs": "admin@mail.ru, admin2@mail.ru",')
+    print('  "log_level": "DEBUG",')
+    print('  "log_format": "%(levelname)5s %(lineno)3d %(message)s"')
+    print("}")
+    sys.exit()
+  def __init__(self, config):
+    """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+    self.arg_index = 1
+    command = self.arg()
+    num = None
+    if "full" == command:
+      method = self.full
+      srcDirs = self.arg()
+      destDirs = self.arg()
+      num = int(self.arg())
+    elif "dump" == command:
+      method = self.dump
+      srcDirs = self.arg()
+      destDirs = self.arg()
+    elif "clone" == command:
+      method = self.clone
+      srcDirs = ""
+      destDirs = self.arg()
+      num = int(self.arg())
+    else:
+      self.help()
+    self.hostname = config.get('hostname')
+    if self.hostname == None:
+      self.hostname = socket.gethostname()
+    self.smtp_host = config.get('smtp_host')
     # набор способов разделить нужные копии от избыточных
     self.timeSeparator = TimeSeparator(num)
     self.separators = (self.timeSeparator, SvnSeparator())
-    self.srcDirs = srcDirs
-    self.destDirs = destDirs
-    self.hostname = hostname
+    self.srcDirs = srcDirs.split(',')
+    log.debug("srcDirs=%s", self.srcDirs)
+    self.destDirs = destDirs.split(',')
+    log.debug("destDirs=%s", self.destDirs)
     self.dirSet = set()
     self.new_checksum_by_path = dict()
     self.checksum_by_path = dict()
     self.files_checksum_by_dir = dict()
     self.checksum_file = dict()
     self.checked = time.time() - 2 * 24 * 3600
-    self.strategies = (SvnBackup(self), GitBackup(self), BzrBackup(self))
+    self.strategies = (SvnBackup(self), GitBackup(self))
     self.commands = dict() # команды на копирование/удаление файлов разделённые на директории
-    for dir in destDirs:
+    self.errors = []
+    for dir in self.destDirs:
       self.commands[dir] = []
+    log.debug("self.commands=%s", self.commands)
+    try:
+      method()
+    except:
+      self.error("%s", traceback.format_exc())
+    if len(self.errors) > 0:
+      smtp_port = config.get('smtp_port')
+      server = smtplib.SMTP_SSL(self.smtp_host)
+      user = config.get('smtp_user')
+      password = config.get('smtp_password')
+      server.login(user, password)
+      msg = MIMEText('\n'.join(self.errors), 'plain', 'utf-8')
+      msg['Subject'] = "backup error: " + self.hostname
+      msg['From'] = config.get('fromaddr')
+      msg['To'] = config.get('toaddrs')
+      server.send_message(msg)
+      server.quit()
+
   def full(self):
     """ Архивирует исходные файлы и клонирует копии в несколько источников """
     self.dump()
@@ -398,7 +415,7 @@ class Backup:
       self.backup(src)
     dirs = dict()
     for path in self.new_checksum_by_path.keys():
-      md5path = os.path.dirname(path) + "/.md5"
+      md5path = os.path.dirname(path) + '/.md5'
       lst = dirs.get(md5path)
       if lst == None:
         lst = dirs[md5path] = []
@@ -408,7 +425,7 @@ class Backup:
       for path in lst:
         name = os.path.basename(path)
         md5[name] = self.new_checksum_by_path[path]
-      with open(md5path, "wb") as fd:
+      with open(md5path, 'wb') as fd:
         names = list(md5.keys())
         names.sort()
         for name in names:
@@ -421,7 +438,7 @@ class Backup:
         command()
   def backup(self, src):
     """ Создаёт резервные копии директории """
-    if "" == src:
+    if '' == src:
       return
     self.last_modified = -1
     self.strategy_dir = []
@@ -458,9 +475,8 @@ class Backup:
       else:
         log.debug("strategy.backup('%s', '%s', '%s')", src, dst, prefix)
         strategy.backup(src, dst, prefix)
-    except Exception, e:
-      log.error("backup error: %s", e)
-      traceback.print_exc()
+    except Exception as e:
+      self.error("backup error:%s\n%s", e, traceback.format_exc())
   def genericBackup(self, src, dst, prefix):
     """ Полностью архивирует директорию, если не существует актуальной резервной копии """
     log.debug("genericBackup(%s, %s, %s)", src, dst, prefix)
@@ -539,7 +555,7 @@ class Backup:
               md5dirs.add(dst)
           elif not name in fileDict:
             entry, index = self.recoveryEntry(name)
-            fileDict[name] = entry          
+            fileDict[name] = entry
             if index < 0:
               log.debug('recovery.append(%s)', name)
               recovery.append(entry)
@@ -567,8 +583,8 @@ class Backup:
           if entry.dir == None:
             entry.dir = dst
           entry.md5[dst] = md5
-    log.debug('for i in in xrange=%s', xrange(len(self.separators)))
-    for i in xrange(len(self.separators)):
+    log.debug('for i in in range=%s', range(len(self.separators)))
+    for i in range(len(self.separators)):
       rec, old = self.separators[i].separate(lists[i])
       recovery += rec
       remove += old
@@ -577,7 +593,7 @@ class Backup:
     for f in recovery:
       k = key + '/' + f.name
       if f.dir == None:
-        log.error("corrupt error: %s", k)
+        self.error("corrupt error: %s", k)
       else:
         md5files.append(f)
         for dst in f.list:
@@ -592,7 +608,7 @@ class Backup:
   def recoveryEntry(self, name):
     """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """ 
     entry = RecoveryEntry(name)
-    for i in xrange(len(self.separators)):
+    for i in range(len(self.separators)):
       separator = self.separators[i]
       matcher = separator.pattern.match(name)
       if matcher != None:
@@ -633,10 +649,10 @@ class Backup:
           write_md5(fd, f.md5[dst], f.name)
       for name in os.listdir(dir):
         path = dir + '/' + name
-        if name.endswith(".md5") and name != ".md5" and os.path.isfile(path):
+        if name.endswith('.md5') and name != '.md5' and os.path.isfile(path):
           removeFile(path)
-    except Exception, e:
-      log.error("new_checksum_by_path error: %s", e)
+    except Exception as e:
+      self.error("new_checksum_by_path error: %s", e)
   def removePair(self, path):
     """ Удаляет файл и контрольную сумму """
     if os.path.isfile(path):
@@ -657,8 +673,8 @@ class Backup:
             if len(buf) == 0:
               break
             out.write(buf)
-    except Exception, e:
-      log.error("copy error: %s", e)
+    except Exception as e:
+      self.error("copy error: %s", e)
     finally:
       sw.stop()
   def checksum(self, path, real_only = True):
@@ -673,8 +689,8 @@ class Backup:
         stored = None
       self.checksum_by_path[path] = (stored, None)
       return (stored, True)
-    except Exception, e:
-      log.error("new_checksum_by_path check error: %s", e)
+    except Exception as e:
+      self.error("new_checksum_by_path check error: %s", e)
       self.checksum_by_path[path] = (None, None)
       return (None, False)
   def storedChecksum(self, path):
@@ -697,59 +713,48 @@ class Backup:
     if result == None:
       self.files_checksum_by_dir[dir] = result = load_md5(dir + ".md5") 
     return result
+  def error(self, format, *args):
+    """ Пишет сообщение в лог. Добавляет сообщение для отправки email """
+    log.error(format, *args)
+    if (self.smtp_host != None):
+      self.errors.append(format % args)
+  def arg(self):
+    """ Возвращает sys.arg[self.arg_index], или выводит справку и завершает работу """
+    if len(sys.argv) > self.arg_index:
+      arg = sys.argv[self.arg_index]
+      self.arg_index += 1
+      return arg
+    self.help()
 
 def readrev(stdout):
   """ Читает номер ревизии Subversion из стандартного вывода """
-  prefix = "Revision: "
+  prefix = b"Revision: "
   for line in stdout:
     if line.startswith(prefix):
       return int(line[len(prefix):])
   raise IOError("Invalid subversion info")
 
-def hostname(index):
-  """ Возвращает sys.argv[index] или имя машины """
-  if len(sys.argv) > index:
-    return sys.argv[index]
-  return socket.gethostname()
-
-def arg(index):
-  """ Возвращает sys.arg[index], или выводит справку и завершает работу """
-  if len(sys.argv) > index:
-    return sys.argv[index]
-  help()
-
-def help():
-  """ Выводит справку об использовании """
-  print "Usage: backup.py command [options]"
-  print "\ncommands:"
-  print "\tfull srcDirs destDirs numberOfFiles [hostname] -- dumps, clones and checks md5 sums"
-  print "\tdump srcDirs destDirs [hostname] -- dumps source directories and writes md5 check sums"
-  print "\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files"
-  print "\nExamples:"
-  print "\tbackup.py full $HOME/src /local/backup,/remote/backup 3"
-  print "\tbackup.py dump $HOME/src,$HOME/bin /var/backup myhost"
-  print "\tbackup.py clone /local/backup,/remote/backup2 5"
-  sys.exit()
-
 def main_backup():
   """ Выполняет резервное копирование """
   global log
-  log = logging.getLogger("backup")
-  logging.basicConfig(level = logging.INFO, \
-                      stream = sys.stdout, \
-                      format = "%(message)s")
-                      #format = "%(levelname)5s %(lineno)3d %(message)s")
-  sys.setrecursionlimit(100)
   sw = StopWatch("backup")
-  command = arg(1)
-  if "full" == command:
-    Backup(arg(2).split(","), arg(3).split(","), int(arg(4)), hostname(5)).full()
-  elif "dump" == command:
-    Backup(arg(2).split(","), arg(3).split(","), None, hostname(4)).dump()
-  elif "clone" == command:
-    Backup([], arg(2).split(","), int(arg(3)), None).clone()
+  try:
+    with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as input:
+      config = json.load(input)
+  except IOError:
+    config = {}
+  log = logging.getLogger("backup")
+  if config.get('log_level') == 'DEBUG':
+    level = logging.DEBUG
   else:
-    help()
+    level = logging.INFO
+  format = config.get('log_format')
+  if format == None:
+    #format = "%(levelname)5s %(lineno)3d %(message)s"
+    format = "%(message)s"
+  logging.basicConfig(level = level, stream = sys.stdout, format = format)
+  sys.setrecursionlimit(100)
+  Backup(config)
   sw.stop()
 
 if __name__ == '__main__':
