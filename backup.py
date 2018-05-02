@@ -25,7 +25,7 @@ class StopWatch:
     self.msg = msg
     self.start = time.time()
   def stop(self):
-    log.info("[%s]: %s sec", self.msg, time.time() - self.start)
+    log.info("[%s]: %1.3f sec", self.msg, time.time() - self.start)
 
 def md5sum(path, input = None, out = None):
   """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
@@ -259,8 +259,6 @@ class GitBackup:
     self.lastModified = backup.lastModified
     self.upToDate = backup.upToDate
     self.genericBackup = backup.genericBackup
-    self.remote = re.compile(r'^\[remote "(.+)"\]$')
-    self.svn_remote = re.compile(r'^\[svn-remote "(.+)"\]$')
   def found(self, src):
     """ Проверяет, что директория - репозиторий Git """
     found = dir_contains(src, ['.git'], [])
@@ -276,24 +274,6 @@ class GitBackup:
     log.info("git found: %s", git)
     config = src + '/config'
     log.debug("config=[%s]", config)
-    remote = svn_remote = False
-    remotes = {'remote': (self.remote,
-                          lambda: system(['git',  'fetch', '--all'], cwd = src)),
-               'svn_remote': (self.svn_remote,
-                              lambda: system(['git', 'svn', 'fetch', '--all'], cwd = src))}
-    with open(config, encoding='UTF-8') as fd:
-      for line in fd:
-        line = line.rstrip()
-        fetched = set()
-        for key in remotes.keys():
-          remote, commmad = remotes[key]
-          if remote in fetched:
-            continue
-          fetched.add(remote)
-          matcher = remote.match(line)
-          if matcher != None:
-            log.debug("match('%s')=%s", line, matcher.group(1))
-            commmad()
     return True
   def backup(self, src, dst, prefix):
     """ Создаёт резервную копию репозитория Git """
@@ -301,6 +281,18 @@ class GitBackup:
       git = src + '/.git'
     else:
       git = src
+    log.info("\nbackup git: %s", git)
+    remotes = system_hidden(['git', 'config', '--list'], cwd = src, reader = self.readRemotes)
+    for name in remotes['svn-remote']:
+      system(['git', 'svn', 'fetch', name], cwd = src)
+    for name in remotes['remote']:
+      remote = remotes['remote'][name]
+      mirror = remote.get('mirror')
+      log.debug('remote.%s.mirror=%s', name, mirror)
+      if mirror != 'true':
+        system(['git',  'fetch', '--prune', name], cwd = src)
+      else:
+        system(['git',  'push', name], cwd = src)
     self.excludes = set([git + '/svn', git + '/FETCH_HEAD', git + '/subgit', git + '/refs/svn/map'])
     through_dirs(src, self.lastModifiedWithExcludes, self.lastModifiedWithExcludes)
     if self.upToDate(src, dst):
@@ -316,6 +308,21 @@ class GitBackup:
       return True
     self.lastModified(path)
     return False
+  def readRemotes(self, config):
+    """ Читает конфигурацию репозитория """
+    remote = re.compile(r'(remote|svn-remote)\.([^\.]+)\.([^=]+)=(.*)')
+    remotes = {'remote': {}, 'svn-remote': {}}
+    for line in config:
+      matcher = remote.match(line.decode('utf-8'))
+      if matcher != None:
+        type  = matcher.group(1)
+        name  = matcher.group(2)
+        key   = matcher.group(3)
+        value = matcher.group(4)
+        remotes[type].setdefault(name, {})
+        remotes[type][name][key] = value
+    log.debug('remotes=%s', remotes)
+    return remotes
 
 class Backup:
   """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
@@ -325,11 +332,13 @@ class Backup:
     print("\ncommands:")
     print("\tfull srcDirs destDirs numberOfFiles -- dumps, clones and checks md5 sums")
     print("\tdump srcDirs destDirs [-h hostname] -- dumps source directories and writes md5 check sums")
-    print("\tclone destDirs numberOfFiles-- checks md5 sums and clone archived files")
+    print("\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files")
+    print("\tgit srcDirs -- fetch srcDir Git repositories from remotes and push into remotes when --mirror=push")
     print("\nExamples:")
     print("\tbackup.py full $HOME/src /local/backup,/remote/backup 3")
     print("\tbackup.py dump $HOME/src,$HOME/bin /var/backup")
     print("\tbackup.py clone /local/backup,/remote/backup2 5")
+    print("\tbackup.py git $HOME/src,$HOME/bin")
     print()
     print("Optional config file $HOME/.config/backup/backup.cfg:")
     print("{")
@@ -363,6 +372,10 @@ class Backup:
       srcDirs = ""
       destDirs = self.arg()
       num = int(self.arg())
+    elif "git" == command:
+      method = self.git
+      srcDirs = self.arg()
+      destDirs = None
     else:
       self.help()
     self.hostname = config.get('hostname')
@@ -374,7 +387,7 @@ class Backup:
     self.separators = (self.timeSeparator, SvnSeparator())
     self.srcDirs = srcDirs.split(',')
     log.debug("srcDirs=%s", self.srcDirs)
-    self.destDirs = destDirs.split(',')
+    self.destDirs = destDirs.split(',') if destDirs != None else []
     log.debug("destDirs=%s", self.destDirs)
     self.dirSet = set()
     self.new_checksum_by_path = dict()
@@ -393,6 +406,7 @@ class Backup:
     except:
       self.error("%s", traceback.format_exc())
     if len(self.errors) > 0:
+      return # !!!!
       smtp_port = config.get('smtp_port')
       server = smtplib.SMTP_SSL(self.smtp_host)
       user = config.get('smtp_user')
@@ -436,15 +450,21 @@ class Backup:
     for dst in self.destDirs:
       for command in self.commands[dst]:
         command()
+  def git(self):
+    """ Выполняет fetch Git-репозиториев, и push, если настроен mirror push """
+    for src in self.srcDirs:
+      self.backup(src)
   def backup(self, src):
     """ Создаёт резервные копии директории """
+    log.debug('backup(self, src=[%s]); self.destDirs=[%s]', src, self.destDirs)
     if '' == src:
       return
     self.last_modified = -1
     self.strategy_dir = []
     through_dirs(src, self.findStrategy, self.lastModified)
     prefix = self.hostname + '-' + os.path.basename(src)
-    dst = self.destDirs[0] + '/' + self.hostname + '/' + prefix
+    dst = self.destDirs[0] + '/' + self.hostname + '/' + prefix if len(self.destDirs) > 0 else None
+    log.debug('backup: dst=[%s]', dst)
     if len(self.strategy_dir) == 0:
       self.safeBackup(None, src, dst, prefix)
     else:
@@ -455,7 +475,9 @@ class Backup:
         else:
           prf = prefix + dir[length:].replace('/', '-')
           self.last_modified = -1
-          self.safeBackup(strategy, dir, dst +'/' + prf, prf)
+          dstPrf = dst + '/' + prf if dst != None else None
+          log.debug('backup: dstPrf=[%s]', dstPrf)
+          self.safeBackup(strategy, dir, dstPrf, prf)
   def findStrategy(self, dir):
     """ Ищет способ резервного копирования.
         Устанавливает self.time последнее время модификации директории. """
@@ -480,6 +502,9 @@ class Backup:
   def genericBackup(self, src, dst, prefix):
     """ Полностью архивирует директорию, если не существует актуальной резервной копии """
     log.debug("genericBackup(%s, %s, %s)", src, dst, prefix)
+    if dst == None:
+      log.debug('genericBackup: ignore dst=[%s]', dst)
+      return
     date = time.strftime("%Y-%m-%d")
     basename = os.path.basename(src)
     mkdirs(dst)
@@ -502,6 +527,9 @@ class Backup:
       self.last_modified = modified
   def upToDate(self, src, dst):
     """ Проверяет время создания последнего архива. Возвращает True, если backup не требуется """
+    if dst == None:
+      log.debug('dst=[%s] is up date.', dst)
+      return True
     dst += '/'
     if not os.path.isdir(dst):
       return False
