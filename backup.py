@@ -409,7 +409,6 @@ class Backup:
     except:
       self.error("%s", traceback.format_exc())
     if len(self.errors) > 0:
-      return # !!!!
       smtp_port = config.get('smtp_port')
       server = smtplib.SMTP_SSL(self.smtp_host)
       user = config.get('smtp_user')
