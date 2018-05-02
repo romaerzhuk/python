@@ -285,6 +285,7 @@ class GitBackup:
     remotes = system_hidden(['git', 'config', '--list'], cwd = src, reader = self.readRemotes)
     for name in remotes['svn-remote']:
       system(['git', 'svn', 'fetch', name], cwd = src)
+    mirrors = []
     for name in remotes['remote']:
       remote = remotes['remote'][name]
       mirror = remote.get('mirror')
@@ -292,7 +293,9 @@ class GitBackup:
       if mirror != 'true':
         system(['git',  'fetch', '--prune', name], cwd = src)
       else:
-        system(['git',  'push', name], cwd = src)
+        mirrors.append(name)
+    for name in mirrors:
+      system(['git',  'push', name], cwd = src)
     self.excludes = set([git + '/svn', git + '/FETCH_HEAD', git + '/subgit', git + '/refs/svn/map'])
     through_dirs(src, self.lastModifiedWithExcludes, self.lastModifiedWithExcludes)
     if self.upToDate(src, dst):
