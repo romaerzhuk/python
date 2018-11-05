@@ -693,19 +693,26 @@ class Backup:
   def copy(self, src, dst):
     """ Копирует файл """
     sw = StopWatch("cp %s %s" % (src, dst))
+    tmp = dst + '.tmp'
     try:
+      removeFile(tmp)
       mkdirs(os.path.dirname(dst))
-      removeFile(dst)
       with open(src, 'rb') as input:
-        with open(dst, 'wb') as out:
+        with open(tmp, 'wb') as out:
           while True:
             buf = input.read(1024 * 1024)
             if len(buf) == 0:
               break
             out.write(buf)
+      removeFile(dst)
+      os.rename(tmp, dst)
     except Exception as e:
-      self.error("copy error: %s", e)
+      self.error("[cp %s %s] error: %s\n%s", src, dst, e, traceback.format_exc())
     finally:
+      try:
+        removeFile(tmp)
+      except Exception as e:
+        self.error("[rm %s] error: %s\n%s", tmp, e, traceback.format_exc())
       sw.stop()
   def checksum(self, path, real_only = True):
     """ Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
