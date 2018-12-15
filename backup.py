@@ -511,14 +511,14 @@ class Backup:
     basename = os.path.basename(src)
     mkdirs(dst)
     path = dst + '/' + prefix + date + ".tar.gz"
-    self.removePair(path) # удаляет устаревший файл
+    self.removFile(path)
     self.new_checksum_by_path[path] = system(["tar", "cf", "-", basename], \
                                 GzipMd5sum(path), \
                                 cwd = os.path.dirname(src))
     key = path[len(self.destDirs[0]):]
     log.debug('key=%s', key)
     for dst in self.destDirs[1:]:
-      self.removePair(dst + key)
+      self.removePath(dst + key)
   def lastModified(self, path):
     """ Устанавливает self.last_modified последнее время модификации файла. """ 
     if not os.path.isfile(path):
@@ -620,19 +620,17 @@ class Backup:
       remove += old
     log.debug("all=%s\n  recovery=%s\n  remove=%s", recovery + remove, recovery, remove)
     md5files = []
-    for f in recovery:
-      k = key + '/' + f.name
-      if f.dir == None:
+    for rec in recovery:
+      k = key + '/' + rec.name
+      if rec.dir == None:
         self.error("corrupt error: %s", k)
       else:
-        md5files.append(f)
-        for dst in f.list:
-          f.md5[dst] = f.md5[f.dir]
-          self.lazyCopy(f.dir, dst, k)
-          self.lazyRemove(dst, k + ".md5") # устаревший файл
+        md5files.append(rec)
+        for dst in rec.list:
+          self.lazyCopy(rec, dst, k)
     for f in remove:
       for dst in self.destDirs:
-        self.lazyRemovePair(dst, key + '/' + f.name)
+        self.lazyRemove(dst, key + '/' + rec.name)
     for dst in md5dirs:
       self.lazyWriteMd5(dst, key, md5files)
   def recoveryEntry(self, name):
@@ -645,75 +643,73 @@ class Backup:
         separator.init(entry, matcher)
         return entry, i
     return entry, -1
-  def lazyCopy(self, src, dst, key):
-    """ Выполняет отложенное копирование файла """ 
-    if dst != self.destDirs[0]:
-      # быстрее всего копировать с 1й директории, с локального диска
-      src = self.destDirs[0]
-    srcPath = src + key
-    dstPath = dst + key
-    log.debug("lazy cp %s %s", srcPath, dstPath)
-    self.commands[dst].append(lambda: self.copy(srcPath, dstPath))
+  def lazyCopy(self, rec, dst, key):
+    """ Выполняет отложенное копирование файла """
+    log.debug("lazy cp %s%s %s%s", rec.dir, key, dst, key)
+    self.commands[dst].append(lambda: self.copy(rec, dst, key))
   def lazyRemove(self, dst, key):
     """ Выполняет отолженное удаление файла """
     path = dst + key
     log.debug("lazy rm %s", path)
     self.commands[dst].append(lambda: removeFile(path))
-  def lazyRemovePair(self, dst, key):
-    """ Выполняет отолженное удаление пары файлов """
-    path = dst + key
-    log.debug("lazy rm %s", path)
-    self.commands[dst].append(lambda: self.removePair(path))
   def lazyWriteMd5(self, dst, key, md5files):
     """ Выполняет отложенную запись контрольной суммы """
     log.debug("lazy md5sum -b * > %s%s/.md5", dst, key)
-    self.commands[dst].append(lambda: self.writeMd5(dst, key, md5files))    
+    self.commands[dst].append(lambda: self.writeMd5(dst, key, md5files))
   def writeMd5(self, dst, key, md5files):
     """ Пишет контрольные суммы в файл """
+    dir  = dst + key 
+    path = dir + "/.md5"
+    self.safeWrite(path, lambda fd: self.doWriteMd5(fd, dir, dst, md5files), lambda: "md5sum -b %s/*" % dst + key)
+  def doWriteMd5(self, fd, dir, dst, md5files):
+    """ Пишет контрольные суммы в файл """
+    for rec in md5files:
+      if dir in rec.md5:
+        write_md5(fd, rec.md5[dst], rec.name)
+  def safeWrite(self, file, write, name):
     try:
-      dir  = dst + key 
-      path = dir + "/.md5"
-      removeFile(path)
-      with open(path, "wb") as fd:
-        for f in md5files:
-          write_md5(fd, f.md5[dst], f.name)
-      for name in os.listdir(dir):
-        path = dir + '/' + name
-        if name.endswith('.md5') and name != '.md5' and os.path.isfile(path):
-          removeFile(path)
+      tmp = file + ".tmp"
+      removeFile(tmp)
+      mkdirs(os.path.dirname(file))
+      with open(tmp, "wb") as fd:
+        write(fd)
+      removeFile(file)
+      os.rename(tmp, file)
+      return 1
     except Exception as e:
-      self.error("new_checksum_by_path error: %s", e)
-  def removePair(self, path):
-    """ Удаляет файл и контрольную сумму """
+      self.error("%s error: %s\n%s", name(), e, traceback.format_exc())
+      return 0
+    finally:
+      self.safeRemove(tmp)
+  def safeRemove(self, path):
+    """ удаляет файл с подавление исключений """
+    try:
+      self.remove(path)
+    except Exception as e:
+      self.error("[rm %s] error: %s\n%s", path, e, traceback.format_exc())
+  def remove(self, path):
+    """ Удаляет файл """
     if os.path.isfile(path):
       sw = StopWatch("rm %1s" % path)
       removeFile(path)
       sw.stop()
-    removeFile(path + ".md5") # устаревший файл
-  def copy(self, src, dst):
+  def copy(self, rec, dstDir, key):
     """ Копирует файл """
+    # быстрее всего копировать с 1й директории, с локального диска
+    srcDir = rec.dir if dstDir == self.destDirs[0] else self.destDirs[0]
+    src = srcDir + key
+    dst = dstDir + key
     sw = StopWatch("cp %s %s" % (src, dst))
-    tmp = dst + '.tmp'
-    try:
-      removeFile(tmp)
-      mkdirs(os.path.dirname(dst))
-      with open(src, 'rb') as input:
-        with open(tmp, 'wb') as out:
-          while True:
-            buf = input.read(1024 * 1024)
-            if len(buf) == 0:
-              break
-            out.write(buf)
-      removeFile(dst)
-      os.rename(tmp, dst)
-    except Exception as e:
-      self.error("[cp %s %s] error: %s\n%s", src, dst, e, traceback.format_exc())
-    finally:
-      try:
-        removeFile(tmp)
-      except Exception as e:
-        self.error("[rm %s] error: %s\n%s", tmp, e, traceback.format_exc())
-      sw.stop()
+    if self.safeWrite(dst, lambda out: self.doCopy(out, src), lambda: "cp %s %s" % (src, dst)):
+      rec.md5[dstDir] = rec.md5[rec.dir]
+    sw.stop()
+  def doCopy(self, out, src):
+    with open(src, 'rb') as input:
+      while True:
+        buf = input.read(1024 * 1024)
+        if len(buf) == 0:
+          break
+        out.write(buf)
   def checksum(self, path, real_only = True):
     """ Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
         и флаг, что сумма была вычислена, а не взята из файла """
