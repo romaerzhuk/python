@@ -511,7 +511,7 @@ class Backup:
     basename = os.path.basename(src)
     mkdirs(dst)
     path = dst + '/' + prefix + date + ".tar.gz"
-    self.removFile(path)
+    self.remove(path)
     self.new_checksum_by_path[path] = system(["tar", "cf", "-", basename], \
                                 GzipMd5sum(path), \
                                 cwd = os.path.dirname(src))
@@ -651,7 +651,7 @@ class Backup:
     """ Выполняет отолженное удаление файла """
     path = dst + key
     log.debug("lazy rm %s", path)
-    self.commands[dst].append(lambda: removeFile(path))
+    self.commands[dst].append(lambda: self.remove(path))
   def lazyWriteMd5(self, dst, key, md5files):
     """ Выполняет отложенную запись контрольной суммы """
     log.debug("lazy md5sum -b * > %s%s/.md5", dst, key)
