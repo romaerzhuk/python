@@ -27,15 +27,17 @@ class StopWatch:
   def stop(self):
     log.info("[%s]: %1.3f sec", self.msg, time.time() - self.start)
 
-def md5sum(path, input = None, out = None):
+def md5sum(path, input = None, out = None, stopWatch = StopWatch):
   """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
   if input == None:
     if not os.path.isfile(path):
       return None
-    sw = StopWatch("md5sum -b %s" % path)
+    if stopWatch != None:
+      sw = stopWatch("md5sum -b %s" % path)
     with open(path, "rb") as input:
       sum = md5sum(path, input)
-      sw.stop()
+      if stopWatch != None:
+        sw.stop()
       return sum
   sum = hashlib.md5()
   while True:
@@ -595,6 +597,7 @@ class Backup:
     if len(fileDict) == 0:
       return
     log.debug('for (name, entry) in in %s', fileDict)
+    sw = StopWatch('md5sum -b %s%s/*' % (self.destDirs[0], key))
     for (name, entry) in fileDict.items():
       log.debug(' for (name=%s, entry=%s) in in %s', name, entry, fileDict)
       for dst in self.destDirs:
@@ -614,6 +617,7 @@ class Backup:
             entry.dir = dst
           entry.md5[dst] = md5
     log.debug('for i in in range=%s', range(len(self.separators)))
+    sw.stop()
     for i in range(len(self.separators)):
       rec, old = self.separators[i].separate(lists[i])
       recovery += rec
@@ -717,7 +721,7 @@ class Backup:
       stored, time = self.storedChecksum(path)
       if time == None or not real_only and self.checked < time:
         return (stored, False)
-      real = md5sum(path)
+      real = md5sum(path, stopWatch = None)
       if stored != real:
         stored = None
       self.checksum_by_path[path] = (stored, None)
