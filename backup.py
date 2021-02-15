@@ -518,7 +518,7 @@ class Backup:
     key = path[len(self.destDirs[0]):]
     log.debug('key=%s', key)
     for dst in self.destDirs[1:]:
-      self.removePath(dst + key)
+      self.remove(dst + key)
   def lastModified(self, path):
     """ Устанавливает self.last_modified последнее время модификации файла. """ 
     if not os.path.isfile(path):
@@ -628,7 +628,7 @@ class Backup:
         md5files.append(rec)
         for dst in rec.list:
           self.lazyCopy(rec, dst, k)
-    for f in remove:
+    for rec in remove:
       for dst in self.destDirs:
         self.lazyRemove(dst, key + '/' + rec.name)
     for dst in md5dirs:
