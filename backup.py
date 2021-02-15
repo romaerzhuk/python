@@ -660,11 +660,11 @@ class Backup:
     """ Пишет контрольные суммы в файл """
     dir  = dst + key 
     path = dir + "/.md5"
-    self.safeWrite(path, lambda fd: self.doWriteMd5(fd, dir, dst, md5files), lambda: "md5sum -b %s/*" % dst + key)
-  def doWriteMd5(self, fd, dir, dst, md5files):
+    self.safeWrite(path, lambda fd: self.doWriteMd5(fd, dst, md5files), lambda: "md5sum -b %s/*" % dst + key)
+  def doWriteMd5(self, fd, dst, md5files):
     """ Пишет контрольные суммы в файл """
     for rec in md5files:
-      if dir in rec.md5:
+      if dst in rec.md5:
         write_md5(fd, rec.md5[dst], rec.name)
   def safeWrite(self, file, write, name):
     try:
