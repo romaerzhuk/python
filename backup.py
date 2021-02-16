@@ -296,17 +296,23 @@ class GitBackup:
         system(['git',  'fetch', '--prune', name], cwd = src)
       else:
         mirrors.append(name)
-    for name in mirrors:
-      system(['git',  'push', name], cwd = src)
+    if len(mirrors) > 0:
+      self.git_fsck(src)
+      for name in mirrors:
+        system(['git',  'push', name], cwd = src)
     self.excludes = set([git + '/svn', git + '/FETCH_HEAD', git + '/subgit', git + '/refs/svn/map'])
     through_dirs(src, self.lastModifiedWithExcludes, self.lastModifiedWithExcludes)
     if self.upToDate(src, dst):
       return
     system(['git', 'prune'], cwd = src)
+    if len(mirrors) == 0:
+      self.git_fsck(src)
+    self.genericBackup(src, dst, prefix)
+  def git_fsck(self, src):
+    """ Проверяет целостность репоизитория Git """
     res = system(['git', 'fsck', '--full', '--no-progress'], cwd = src)
     if res != 0:
-      raise IOError('Invalid git repository %s, result=%s' % (os.path.dirname(src), res))
-    self.genericBackup(src, dst, prefix)
+      raise IOError('Invalid git repository %s' % os.path.dirname(src))
   def lastModifiedWithExcludes(self, path):
     """ Запоминает время последней модификации файлов """
     if path in self.excludes:
