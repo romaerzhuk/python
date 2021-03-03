@@ -323,7 +323,7 @@ class GitBackup:
 
     def __init__(self, backup):
         self.last_modified = backup.last_modified
-        self.upToDate = backup.up_to_date
+        self.up_to_date = backup.up_to_date
         self.genericBackup = backup.generic_backup
         self.excludes = {}
 
@@ -370,7 +370,7 @@ class GitBackup:
                 system(['git', 'push', name], cwd=src)
         self.excludes = {git + '/svn', git + '/FETCH_HEAD', git + '/subgit', git + '/refs/svn/map'}
         through_dirs(src, self.last_modified_with_excludes, self.last_modified_with_excludes)
-        if self.upToDate(src, dst):
+        if self.up_to_date(src, dst):
             return
         system(['git', 'prune'], cwd=src)
         if len(mirrors) == 0:
