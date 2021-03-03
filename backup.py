@@ -492,9 +492,10 @@ class Backup:
         for directory in self.dest_dirs:
             self.commands[directory] = []
         log.debug("self.commands=%s", self.commands)
+        # noinspection PyBroadException
         try:
             method()
-        except:
+        except BaseException:
             self.error("%s", traceback.format_exc())
         if len(self.errors) > 0:
             smtp_port = config.get('smtp_port')
