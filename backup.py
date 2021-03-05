@@ -6,7 +6,7 @@ from __future__ import with_statement
 import functools
 import hashlib
 import json
-import logging
+import logging as log
 import os
 import platform
 import re
@@ -275,7 +275,7 @@ class SvnBackup:
         """ Снимает резервную копию для одиночного репозитория """
         mkdirs(dst)
         log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
-        new_rev = system(("svn", "info", "file://" + src), self.read_revision)
+        new_rev = self.svn_revision(src)
         md5 = load_md5(dst + "/.md5")[0]
         step = min_rev = 100
         while new_rev >= step - 1 and step < 10000:
@@ -291,6 +291,10 @@ class SvnBackup:
             old_rev = rev
         self.dump(src, dst, prefix, old_rev, new_rev, md5)
         return True
+
+    def svn_revision(self, src):
+        """  Возврщает ревизию репозитория """
+        return system(("svn", "info", "file://" + os.path.abspath(src)), self.read_revision)
 
     def dump(self, src, dst, prefix, old_rev, new_rev, md5):
         """ Запускает svnadmin dump для одиночного репозитория """
@@ -441,9 +445,63 @@ class Backup:
         print("}")
         sys.exit()
 
-    def __init__(self, config):
+    def __init__(self):
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
         self.arg_index = 1
+        self.hostname = None
+        self.smtp_host = None
+        self.smtp_port = None
+        self.smtp_user = None
+        self.smtp_password = None
+        self.from_address = None
+        self.to_address = None
+        # набор способов разделить нужные копии от избыточных
+        self.time_separator_type = TimeSeparator
+        self.svn_separator_type = SvnSeparator
+        self.time_separator = None
+        self.separators = ()
+        self.src_dirs = []
+        self.dest_dirs = []
+        self.dir_set = set()
+        self.new_checksum_by_path = dict()
+        self.checksum_by_path = dict()
+        self.files_checksum_by_dir = dict()
+        self.checksum_file = dict()
+        self.checked = time.time() - 2 * 24 * 3600
+        self.strategies = (SvnBackup(self), GitBackup(self))
+        self.commands = dict()  # команды на копирование/удаление файлов разделённые на директории
+        self.errors = []
+        self.strategy_dir = []
+        self.last_modified_time = -1
+        self.config = {}
+
+    def configure(self):
+        """ Конфигурирует выполнение """
+        self.config = self.read_config()
+        if self.config.get('log_level') == 'DEBUG':
+            level = log.DEBUG
+        else:
+            level = log.INFO
+        log_format = self.config.get('log_format')
+        if log_format is None:
+            # log_format = "%(levelname)5s %(lineno)3d %(message)s"
+            log_format = "%(message)s"
+        log.basicConfig(level=level, stream=sys.stdout, format=log_format)
+        sys.setrecursionlimit(100)
+
+    @staticmethod
+    def read_config():
+        """ Выполняет резервное копирование """
+        try:
+            with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as cfg:
+                return json.load(cfg)
+        except IOError:
+            return {}
+
+    def main(self):
+        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+        sw = StopWatch("backup")
+        self.configure()
         command = self.arg()
         num = None
         if "full" == command:
@@ -467,28 +525,16 @@ class Backup:
         else:
             self.help()
             return
-        self.hostname = config.get('hostname')
         if self.hostname is None:
             self.hostname = socket.gethostname()
-        self.smtp_host = config.get('smtp_host')
+        self.smtp_host = self.config.get('smtp_host')
         # набор способов разделить нужные копии от избыточных
-        self.timeSeparator = TimeSeparator(num)
-        self.separators = (self.timeSeparator, SvnSeparator())
-        self.srcDirs = src_dirs.split(',')
-        log.debug("srcDirs=%s", self.srcDirs)
+        self.time_separator = TimeSeparator(num)
+        self.separators = (self.time_separator, SvnSeparator())
+        self.src_dirs = src_dirs.split(',')
+        log.debug("src_dirs=%s", self.src_dirs)
         self.dest_dirs = dest_dirs.split(',') if dest_dirs is not None else []
-        log.debug("destDirs=%s", self.dest_dirs)
-        self.dirSet = set()
-        self.new_checksum_by_path = dict()
-        self.checksum_by_path = dict()
-        self.files_checksum_by_dir = dict()
-        self.checksum_file = dict()
-        self.checked = time.time() - 2 * 24 * 3600
-        self.strategies = (SvnBackup(self), GitBackup(self))
-        self.commands = dict()  # команды на копирование/удаление файлов разделённые на директории
-        self.errors = []
-        self.strategy_dir = []
-        self.last_modified_time = -1
+        log.debug("dest_dirs=%s", self.dest_dirs)
         for directory in self.dest_dirs:
             self.commands[directory] = []
         log.debug("self.commands=%s", self.commands)
@@ -498,17 +544,18 @@ class Backup:
         except BaseException:
             self.error("%s", traceback.format_exc())
         if len(self.errors) > 0:
-            smtp_port = config.get('smtp_port')
+            smtp_port = self.config.get('smtp_port')
             server = smtplib.SMTP_SSL(self.smtp_host, smtp_port)
-            user = config.get('smtp_user')
-            password = config.get('smtp_password')
+            user = self.config.get('smtp_user')
+            password = self.config.get('smtp_password')
             server.login(user, password)
             msg = MIMEText('\n'.join(self.errors), 'plain', 'utf-8')
             msg['Subject'] = "backup error: " + self.hostname
-            msg['From'] = config.get('fromaddr')
-            msg['To'] = config.get('toaddrs')
+            msg['From'] = self.config.get('fromaddr')
+            msg['To'] = self.config.get('toaddrs')
             server.send_message(msg)
             server.quit()
+        sw.stop()
 
     def full(self):
         """ Архивирует исходные файлы и клонирует копии в несколько источников """
@@ -517,7 +564,7 @@ class Backup:
 
     def dump(self):
         """ Архивирует исходные файлы """
-        for src in self.srcDirs:
+        for src in self.src_dirs:
             self.backup(src)
         dirs = dict()
         for path in self.new_checksum_by_path.keys():
@@ -546,7 +593,7 @@ class Backup:
 
     def git(self):
         """ Выполняет fetch Git-репозиториев, и push, если настроен mirror push """
-        for src in self.srcDirs:
+        for src in self.src_dirs:
             self.backup(src)
 
     def backup(self, src):
@@ -640,7 +687,7 @@ class Backup:
                 if index == 0:  # TimeSeparator
                     log.debug('entry_list.append(%s)', entry)
                     entry_list.append(entry)
-        entry_list = self.timeSeparator.separate(entry_list)[0]
+        entry_list = self.time_separator.separate(entry_list)[0]
         log.debug('list=%s', entry_list)
         if len(entry_list) > 0:
             path = dst + entry_list[0].name
@@ -655,10 +702,10 @@ class Backup:
     def recovery_dirs(self, key):
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
         Удаляет устаревшие копии """
-        if key in self.dirSet:
+        if key in self.dir_set:
             return
         log.debug("recovery dir %1s", key)
-        self.dirSet.add(key)
+        self.dir_set.add(key)
         lists, recovery, remove = ([], []), [], []
         file_dict = dict()
         md5dirs = set()
@@ -881,29 +928,5 @@ class Backup:
         self.help()
 
 
-def main_backup():
-    """ Выполняет резервное копирование """
-    global log
-    sw = StopWatch("backup")
-    try:
-        with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as cfg:
-            config = json.load(cfg)
-    except IOError:
-        config = {}
-    log = logging.getLogger("backup")
-    if config.get('log_level') == 'DEBUG':
-        level = logging.DEBUG
-    else:
-        level = logging.INFO
-    log_format = config.get('log_format')
-    if log_format is None:
-        # log_format = "%(levelname)5s %(lineno)3d %(message)s"
-        log_format = "%(message)s"
-    logging.basicConfig(level=level, stream=sys.stdout, format=log_format)
-    sys.setrecursionlimit(100)
-    Backup(config)
-    sw.stop()
-
-
 if __name__ == '__main__':
-    main_backup()
+    Backup().main()
