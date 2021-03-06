@@ -47,6 +47,13 @@ class StopWatch:
         log.info("[%s]: %1.3f sec", self.msg, time.time() - self.start)
 
 
+def stop_watch(msg, func):
+    """ Засекает время выполнения команды """
+    start = time.time()
+    func()
+    log.info("[%s]: %1.3f sec", msg, time.time() - start)
+
+
 def md5sum(path, input_stream=None, out=None, stop_watch=StopWatch):
     """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
     if input_stream is None:
@@ -328,7 +335,7 @@ class GitBackup:
     def __init__(self, backup):
         self.last_modified = backup.last_modified
         self.up_to_date = backup.up_to_date
-        self.genericBackup = backup.generic_backup
+        self.generic_backup = backup.generic_backup
         self.excludes = {}
 
     @staticmethod
@@ -379,7 +386,7 @@ class GitBackup:
         system(['git', 'prune'], cwd=src)
         if len(mirrors) == 0:
             self.git_fsck(src)
-        self.genericBackup(src, dst, prefix)
+        self.generic_backup(src, dst, prefix)
 
     @staticmethod
     def git_fsck(src):
@@ -539,16 +546,24 @@ class Backup:
 
     def main(self):
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
-        sw = StopWatch("backup")
-        method = self.configure()
+        stop_watch("backup", self.invoke)
+
+    def invoke(self):
+        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
         # noinspection PyBroadException
         try:
-            method()
+            self.configure()()
         except BaseException:
             self.error("%s", traceback.format_exc())
-        if len(self.errors) > 0:
-            smtp_port = self.config.get('smtp_port')
-            server = smtplib.SMTP_SSL(self.smtp_host, smtp_port)
+        self.send_errors()
+
+    def send_errors(self):
+        """ Отправляет ошибки на почту """
+        if len(self.errors) == 0:
+            return
+        smtp_port = self.config.get('smtp_port')
+        server = smtplib.SMTP_SSL(self.smtp_host, smtp_port)
+        try:
             user = self.config.get('smtp_user')
             password = self.config.get('smtp_password')
             server.login(user, password)
@@ -557,8 +572,8 @@ class Backup:
             msg['From'] = self.config.get('fromaddr')
             msg['To'] = self.config.get('toaddrs')
             server.send_message(msg)
+        finally:
             server.quit()
-        sw.stop()
 
     def full(self):
         """ Архивирует исходные файлы и клонирует копии в несколько источников """
@@ -649,9 +664,9 @@ class Backup:
 
     def generic_backup(self, src, dst, prefix):
         """ Полностью архивирует директорию, если не существует актуальной резервной копии """
-        log.debug("genericBackup(%s, %s, %s)", src, dst, prefix)
+        log.debug("generic backup(%s, %s, %s)", src, dst, prefix)
         if dst is None:
-            log.debug('genericBackup: ignore dst=[%s]', dst)
+            log.debug('generic backup: ignore dst=[%s]', dst)
             return
         date = time.strftime("%Y-%m-%d")
         basename = os.path.basename(src)
@@ -672,7 +687,7 @@ class Backup:
             return
         modified = os.path.getmtime(path)
         if modified > self.last_modified_time:
-            log.debug('lastModified %s %s', modified, path)
+            log.debug('last modified %s %s', modified, path)
             self.last_modified_time = modified
 
     def up_to_date(self, src, dst):

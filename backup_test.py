@@ -1,25 +1,46 @@
 import json
+import logging
 import math
 import os.path
 import time
-import logging
 from unittest import TestCase
 from unittest import mock
 from unittest.mock import Mock
+from unittest.mock import MagicMock
+from unittest.mock import call
 from unittest.mock import patch
 
+import backup
 from backup import Backup
 from backup import SvnBackup
 from backup import SvnSeparator
 from backup import TimeSeparator
 
 
+class BackupUnitTest(TestCase):
+
+    @patch('backup.time', autospec=True)
+    @patch('backup.log', autospec=True)
+    def test_stop_watch(self, mock_log, mock_time):
+        msg = 'msg%s' % uid()
+        func = Mock()
+        stop = uid_time()
+        start = uid_time()
+        mock_time.time.side_effect = [start, stop]
+        func.side_effect = lambda:\
+            mock_time.time.assert_called_once_with()
+
+        backup.stop_watch(msg, func)
+
+        mock_log.info.assert_called_once_with("[%s]: %1.3f sec", msg, stop - start)
+
+
 class SvnBackupTest(TestCase):
 
     @patch('backup.system', autospec=True)
     def test_svn_revision(self, mock_system):
-        backup = Backup()
-        subj = SvnBackup(backup)
+        subj = Backup()
+        subj = SvnBackup(subj)
         for src in (str(uid()), "/%s" % uid(), "../%s" % uid()):
             with self.subTest(src=src):
                 expected = uid()
@@ -39,9 +60,9 @@ class BackupTest(TestCase):
     def test_init(self, mock_time):
         now = uid_time()
         mock_time.time.return_value = now
-        backup = Backup()
+        subj = Backup()
 
-        self.assertEqual(time_to_iso(backup.checked), time_to_iso(now - 2 * 24 * 3600))
+        self.assertEqual(time_to_iso(subj.checked), time_to_iso(now - 2 * 24 * 3600))
 
     @patch("backup.sys", autospec=True)
     @patch("backup.log", autospec=True)
@@ -139,16 +160,115 @@ class BackupTest(TestCase):
                     self.assertEqual(subj.dest_dirs, dest_dirs if has_dst_dirs else [])
                     self.assertEqual(subj.commands, commands)
 
+    @patch('backup.stop_watch', autospec=True)
+    def test_main(self, mock_stop_watch):
+        subj = Backup()
+        subj.main()
+        mock_stop_watch.assert_called_once_with('backup', subj.invoke)
+
+    @patch('backup.traceback', autospec=True)
+    @patch.object(Backup, 'configure', autospec=True)
+    @patch.object(Backup, 'error', autospec=True)
+    @patch.object(Backup, 'send_errors', autospec=True)
+    def test_invoke(self, mock_send_errors, mock_error, mock_configure, mock_traceback):
+        for thrown in [None, BaseException, Exception, IOError]:
+            trace = 'trace-%s' % uid()
+
+            def invoke():
+                mock_send_errors.assert_not_called()
+                if thrown:
+                    raise thrown
+
+            def format_exc():
+                mock_send_errors.assert_not_called()
+                return trace
+
+            with self.subTest(thrown=thrown):
+                for m in (mock_send_errors, mock_error, mock_configure, mock_traceback):
+                    m.reset_mock()
+                subj = Backup()
+                method = Mock()
+                method.side_effect = invoke
+                mock_configure.return_value = method
+                mock_traceback.format_exc.side_effect = format_exc
+
+                subj.invoke()
+
+                if thrown:
+                    mock_error.assert_called_once_with(subj, "%s", trace)
+                else:
+                    mock_error.assert_not_called()
+                mock_send_errors.assert_called_once_with(subj)
+
+    @patch('backup.smtplib.SMTP_SSL', autospec=True)
+    @patch('backup.MIMEText', autospec=True)
+    def test_send_errors(self, mime_text, smtp_ssl):
+        for thrown in [None, BaseException(), Exception(), IOError()]:
+            for empty in (False, True):
+                with self.subTest(thrown=thrown, empty=empty):
+                    for m in (mime_text, smtp_ssl):
+                        m.reset_mock()
+                    subj = Backup()
+                    errors = [] if empty else ['err-%s' % uid(), 'err-%s' % uid()]
+                    subj.errors = errors
+                    hostname = 'hostname-%s' % uid()
+                    subj.hostname = hostname
+                    subj.smtp_host = 'smtp_host-%s' % uid()
+                    port = uid()
+                    user = 'user-%s' % uid()
+                    password = 'password-%s' % uid()
+                    from_address = 'from-%s' % uid()
+                    to_address = 'to-%s' % uid()
+                    subj.config = {'smtp_port': port,
+                                   'smtp_user': user,
+                                   'smtp_password': password,
+                                   'fromaddr': from_address,
+                                   'toaddrs': to_address}
+                    server = Mock()
+                    smtp_ssl.return_value = server
+                    message = MagicMock()
+
+                    def send_message(msg):
+                        self.assertEqual(msg, message)
+                        server.login.assert_called_once_with(user, password)
+                        mime_text.assert_called_once_with('\n'.join(errors), 'plain', 'utf-8')
+                        message.__setitem__.assert_has_calls([
+                            call('Subject', "backup error: " + hostname),
+                            call('From', from_address),
+                            call('To', to_address)
+                        ])
+                        server.quit.assert_not_called()
+                        if thrown:
+                            raise thrown
+
+                    mime_text.return_value = message
+                    server.send_message.side_effect = send_message
+
+                    # noinspection PyBroadException
+                    try:
+                        subj.send_errors()
+                    except BaseException as e:
+                        if e != thrown:
+                            raise e
+
+                    if not empty:
+                        server.send_message.assert_called_once_with(message)
+                        server.quit.assert_called_once_with()
+                    else:
+                        smtp_ssl.assert_not_called()
+                        server.login.assert_not_called()
+                        server.quit.assert_not_called()
+
     @patch("backup.time", autospec=True)
     @patch("backup.log", autospec=True)
-    def _test_full(self, mock_log, mock_time):
+    def test_full(self, mock_log, mock_time):
         now = uid_time()
         mock_time.time.return_value = now
         mock_log.debug = Mock()
         mock_log.info = Mock()
         mock_log.error = Mock()
-        backup = Backup()
-        self.assertEqual(time_to_iso(backup.checked), time_to_iso(now - 2 * 24 * 3600))
+        subj = Backup()
+        self.assertEqual(time_to_iso(subj.checked), time_to_iso(now - 2 * 24 * 3600))
 
         self.fail("TODO")
 
