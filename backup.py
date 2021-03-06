@@ -447,6 +447,7 @@ class Backup:
 
     def __init__(self):
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+        self.config = {}
         self.arg_index = 1
         self.hostname = None
         self.smtp_host = None
@@ -473,14 +474,12 @@ class Backup:
         self.errors = []
         self.strategy_dir = []
         self.last_modified_time = -1
-        self.config = {}
 
     def configure(self):
         """ Конфигурирует выполнение """
         self.config = self.read_config()
-        if self.config.get('log_level') == 'DEBUG':
-            level = log.DEBUG
-        else:
+        level = log.getLevelName(self.config.get('log_level'))
+        if level == 'Level None':
             level = log.INFO
         log_format = self.config.get('log_format')
         if log_format is None:
