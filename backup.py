@@ -457,8 +457,6 @@ class Backup:
         self.from_address = None
         self.to_address = None
         # набор способов разделить нужные копии от избыточных
-        self.time_separator_type = TimeSeparator
-        self.svn_separator_type = SvnSeparator
         self.time_separator = None
         self.separators = ()
         self.src_dirs = []
@@ -487,6 +485,7 @@ class Backup:
             log_format = "%(message)s"
         log.basicConfig(level=level, stream=sys.stdout, format=log_format)
         sys.setrecursionlimit(100)
+        return self.command()
 
     @staticmethod
     def read_config():
@@ -497,10 +496,8 @@ class Backup:
         except IOError:
             return {}
 
-    def main(self):
-        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
-        sw = StopWatch("backup")
-        self.configure()
+    def command(self):
+        """ Вычисляет выполняемый метод """
         command = self.arg()
         num = None
         if "full" == command:
@@ -522,8 +519,9 @@ class Backup:
             src_dirs = self.arg()
             dest_dirs = None
         else:
-            self.help()
-            return
+            method = self.help
+            src_dirs, dest_dirs = "", None
+        self.hostname = self.config.get('hostname')
         if self.hostname is None:
             self.hostname = socket.gethostname()
         self.smtp_host = self.config.get('smtp_host')
@@ -537,6 +535,12 @@ class Backup:
         for directory in self.dest_dirs:
             self.commands[directory] = []
         log.debug("self.commands=%s", self.commands)
+        return method
+
+    def main(self):
+        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+        sw = StopWatch("backup")
+        method = self.configure()
         # noinspection PyBroadException
         try:
             method()
