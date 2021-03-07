@@ -116,6 +116,7 @@ class BackupTest(TestCase):
                 ('dump', subj.dump, True, True),
                 ('clone', subj.clone, False, True),
                 ('git', subj.git, True, False),
+                ('checks', subj.checks, True, False),
                 ('any', subj.help, False, False),
                 (str(uid()), subj.help, False, False)):
             for empty in (False, True):

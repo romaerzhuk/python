@@ -54,12 +54,12 @@ def stop_watch(msg, func):
     log.info("[%s]: %1.3f sec", msg, time.time() - start)
 
 
-def md5sum(path, input_stream=None, out=None, stop_watch=StopWatch):
+def md5sum(path, input_stream=None, out=None, stop_watch_type=StopWatch):
     """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
     if input_stream is None:
         if not os.path.isfile(path):
             return None
-        sw = None if stop_watch is None else stop_watch("md5sum -b %s" % path)
+        sw = None if stop_watch_type is None else stop_watch_type("md5sum -b %s" % path)
         with open(path, "rb") as input_stream:
             checksum = md5sum(path, input_stream)
             if sw is not None:
@@ -432,11 +432,13 @@ class Backup:
         print("\tdump srcDirs destDirs [-h hostname] -- dumps source directories and writes md5 check sums")
         print("\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files")
         print("\tgit srcDirs -- fetch srcDir Git repositories from remotes and push into remotes when --mirror=push")
+        print("\tchecks destDirs -- checks md5 sums slow for low I/O load")
         print("\nExamples:")
-        print("\tbackup.py full $HOME/src /local/backup,/remote/backup 3")
-        print("\tbackup.py dump $HOME/src,$HOME/bin /var/backup")
+        print("\tbackup.py full $HOME/src1,$HOME/src2 /local/backup,/remote/backup 3")
+        print("\tbackup.py dump $HOME/src1,$HOME/src2 /var/backup")
         print("\tbackup.py clone /local/backup,/remote/backup2 5")
-        print("\tbackup.py git $HOME/src,$HOME/bin")
+        print("\tbackup.py git $HOME/src1,$HOME/src2")
+        print("\tbackup.py checks /local/backup1,/local/backup2")
         print()
         print("Optional config file $HOME/.config/backup/backup.cfg:")
         print("{")
@@ -523,6 +525,10 @@ class Backup:
             num = int(self.arg())
         elif "git" == command:
             method = self.git
+            src_dirs = self.arg()
+            dest_dirs = None
+        elif 'checks' == command:
+            method = self.checks
             src_dirs = self.arg()
             dest_dirs = None
         else:
@@ -613,6 +619,11 @@ class Backup:
         """ Выполняет fetch Git-репозиториев, и push, если настроен mirror push """
         for src in self.src_dirs:
             self.backup(src)
+
+    @staticmethod
+    def checks():
+        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
+        pass
 
     def backup(self, src):
         """ Создаёт резервные копии директории """
@@ -899,7 +910,7 @@ class Backup:
             if file_time is None or not real_only and self.checked < file_time:
                 return stored, False
             # noinspection PyTypeChecker
-            real = md5sum(path, stop_watch=None)
+            real = md5sum(path, stop_watch_type=None)
             if stored != real:
                 stored = None
             self.checksum_by_path[path] = (stored, None)
