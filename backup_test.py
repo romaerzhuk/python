@@ -3,10 +3,14 @@ import logging
 import math
 import os.path
 import time
+from functools import reduce
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from unittest import TestCase
 from unittest import mock
-from unittest.mock import Mock
 from unittest.mock import MagicMock
+from unittest.mock import Mock
 from unittest.mock import call
 from unittest.mock import patch
 
@@ -23,16 +27,154 @@ class BackupUnitTest(TestCase):
     @patch('backup.log', autospec=True)
     def test_stop_watch(self, mock_log, mock_time):
         msg = 'msg%s' % uid()
-        func = Mock()
         stop = uid_time()
         start = uid_time()
         mock_time.time.side_effect = [start, stop]
-        func.side_effect = lambda:\
-            mock_time.time.assert_called_once_with()
+        result = uid()
 
-        backup.stop_watch(msg, func)
+        def func():
+            mock_time.time.assert_called_once_with()
+            return result
+
+        self.assertEqual(backup.stop_watch(msg, func), result)
 
         mock_log.info.assert_called_once_with("[%s]: %1.3f sec", msg, stop - start)
+
+    @patch('backup.os.path', autospec=True)
+    @patch.object(backup, 'stop_watch', spec=backup.stop_watch)
+    @patch.object(backup, 'with_open', spec=backup.with_open)
+    def test_md5sum(self, mock_with_open, mock_stop_watch, mock_path):
+        import hashlib
+        args = [(is_input_stream, out, is_stop_watch, multiplier, is_file)
+                for is_input_stream in (False, True)
+                for out in (None, Mock(name='out'))
+                for is_stop_watch in (False, True)
+                for multiplier in (None, Mock(name='multiplier'))
+                for is_file in (False, True)]
+        for is_input_stream, out, is_stop_watch, multiplier, is_file in args:
+            with self.subTest(is_input_stream=is_input_stream, out=out, is_stop_watch=is_stop_watch,
+                              multiplier=multiplier, is_file=is_file):
+                for m in (mock_with_open, mock_stop_watch, mock_path, out, multiplier):
+                    if m is not None:
+                        m.reset_mock()
+                input_stream = Mock(name='input_stream')
+                path = 'path-%s' % uid()
+                mock_path.isfile.return_value = is_file
+
+                def stop_watch(msg, func):
+                    self.assertEqual(msg, 'md5sum -b %s' % path)
+                    return func()
+
+                mock_stop_watch.side_effect = stop_watch
+                if multiplier is None:
+                    multiplier_value = 1024
+                else:
+                    multiplier_value = uid()
+                    multiplier.return_value = multiplier_value
+                data = [bytes('data-%s' % uid(), 'UTF-8')] * (3 + uid(5)) + [b'']
+                input_stream.read.side_effect = data
+                md5 = hashlib.md5()
+                for i in data:
+                    md5.update(i)
+                expected = md5.hexdigest().lower() if is_input_stream or is_file else None
+
+                def with_open(name, mode, handler):
+                    self.assertEqual((name, mode), (path, 'rb'))
+                    return handler(input_stream)
+
+                mock_with_open.side_effect = with_open
+
+                self.assertEqual(backup.md5sum(path, input_stream if is_input_stream else None,
+                                               out, is_stop_watch, multiplier), expected)
+
+                if not is_input_stream and not is_file:
+                    mock_with_open.assert_not_called()
+                    mock_stop_watch.assert_not_called()
+                    if out is not None:
+                        out.write.assert_not_called()
+                else:
+                    if is_input_stream:
+                        mock_path.isfile.assert_not_called()
+                        mock_with_open.assert_not_called()
+                        input_stream.read.assert_has_calls([call(1024 * multiplier_value)] * len(data))
+                    else:
+                        mock_path.isfile.assert_called_once_with(path)
+                        mock_with_open.assert_called_once()
+                        if is_stop_watch:
+                            mock_stop_watch.assert_called_once()
+                        else:
+                            mock_stop_watch.assert_not_called()
+                    if out is not None:
+                        out.write.assert_has_calls([call(i) for i in data[0:len(data) - 1]])
+
+    @patch('backup.os.path', autospec=True)
+    def test_load_md5(self, mock_path):
+        for is_file in (False, True):
+            with self.subTest(is_file=is_file):
+                mock_path.reset_mock()
+                path = 'path-%s' % uid()
+                file_time = uid()
+                mock_path.isfile.return_value = is_file
+                mock_path.getmtime.return_value = file_time
+                name1, sum1 = 'name1-%s' % uid(), 'sum1-%s' % uid()
+                name2, sum2 = 'name2-%s' % uid(), 'sum2-%s' % uid()
+                name3, sum3 = 'name2-%s' % uid(), 'sum2-%s' % uid()
+                data = '%s  *%s\n'\
+                       'any%s\n'\
+                       '%s \t *%s\n'\
+                       '%s\t*%s' % (sum1.upper(), name1, uid(), sum2, name2, sum3.upper(), name3)
+                with patch('builtins.open', new_callable=mock.mock_open, read_data=data) as mock_file:
+
+                    result = backup.load_md5(path)
+
+                    mock_path.isfile.assert_called_once_with(path)
+                    if is_file:
+                        self.assertEqual(result, ({name1: sum1, name2: sum2, name3: sum3}, file_time))
+                        mock_file.assert_called_once_with(path, encoding='UTF-8')
+                    else:
+                        self.assertEqual(result, ({}, -1))
+                        mock_file.assert_not_called()
+
+    @patch('backup.os.path', autospec=True)
+    @patch.object(backup, 'with_open', spec=backup.with_open)
+    def test_load_md5_with_times(self, mock_with_open, mock_path):
+        for is_file in (False, True):
+            with self.subTest(is_file=is_file):
+                mock_with_open.reset_mock()
+                mock_path.reset_mock()
+                mock_path.isfile.return_value = is_file
+                path = 'path-%s' % uid()
+
+                def uid_spaces():
+                    return ' ' * (1 + uid(3)) + '\t' * (uid(3))
+
+                expected = {'name-%s' % uid() : ('sum-%s' % uid(), uid_datetime()) for _ in range(0, 5)}
+                data = [expected[key][0] + uid_spaces() + expected[key][1].isoformat() + uid_spaces() + key
+                        for key in expected]
+                data.insert(1, 'sum-%s no matched value name-%s' % (uid(), uid()))
+                data.insert(1, 'sum-%s 2021-99-99T99:99:99.123456+00:00 name-%s' % (uid(), uid()))  # illegal time
+
+                def with_open(name, mode, read):
+                    self.assertEqual((name, mode), (path, 'r'))
+                    return read(data)
+
+                mock_with_open.side_effect = with_open
+
+                self.assertEqual(backup.load_md5_with_times(path), {} if not is_file else expected)
+
+    def test_with_open(self):
+        for binary in (False, True):
+            with self.subTest(binary=binary):
+                handler = Mock()
+                result = uid()
+                handler.return_value = result
+                with patch('builtins.open', new_callable=mock.mock_open) as mock_file:
+                    path = 'path-%s' % uid()
+                    mode = 'mode%s-%s' % (uid(), 'b' if binary else '')
+
+                    self.assertEqual(backup.with_open(path, mode, handler), result)
+
+                    mock_file.assert_called_once_with(path, mode, encoding=None if binary else 'UTF-8')
 
 
 class SvnBackupTest(TestCase):
@@ -116,7 +258,7 @@ class BackupTest(TestCase):
                 ('dump', subj.dump, True, True),
                 ('clone', subj.clone, False, True),
                 ('git', subj.git, True, False),
-                ('checks', subj.checks, True, False),
+                ('checks', subj.checks, False, True),
                 ('any', subj.help, False, False),
                 (str(uid()), subj.help, False, False)):
             for empty in (False, True):
@@ -260,9 +402,94 @@ class BackupTest(TestCase):
                         server.login.assert_not_called()
                         server.quit.assert_not_called()
 
+    @patch.object(Backup, 'check_dir', autospec=True)
+    @patch.object(backup, 'with_lock_file', spec=backup.with_lock_file)
+    def test_checks(self, mock_with_lock_file, mock_check_dir):
+        subj = Backup()
+        dirs = ['dir-%s' % uid() for _ in range(0, 3 + uid(5))]
+        subj.dest_dirs = dirs
+        index = 0
+
+        def with_lock_file(path, handler):
+            nonlocal index
+            if index == 0:
+                mock_check_dir.assert_not_called()
+            else:
+                mock_check_dir.assert_has_calls([call(subj, i) for i in dirs[0:index]])
+            self.assertEqual(path, dirs[index] + '/.lock')
+
+            handler()
+            index += 1
+            mock_check_dir.assert_has_calls([call(subj, i) for i in dirs[0:index]])
+
+        mock_with_lock_file.side_effect = with_lock_file
+        subj.checks()
+        mock_with_lock_file.assert_has_calls([call(i + '/.lock', mock.ANY) for i in dirs])
+
+    @patch.object(Backup, 'read_md5_with_times', spec=Backup.read_md5_with_times)
+    @patch.object(Backup, 'safe_write', autospec=True)
+    @patch.object(Backup, 'write_md5_with_time_dict', spec=Backup.write_md5_with_time_dict)
+    @patch.object(Backup, 'slow_check_dir', spec=Backup.slow_check_dir)
+    def test_check_dir(self, mock_slow_check_dir, mock_write_md5_with_time_dict,
+                       mock_safe_write, mock_read_md5_with_times):
+        for is_safe_write in (False, True):
+            for m in (mock_slow_check_dir, mock_write_md5_with_time_dict,
+                      mock_safe_write, mock_read_md5_with_times):
+                m.reset_mock()
+            with self.subTest(is_safe_write=is_safe_write):
+                subj = Backup()
+                path = 'path-%s' % uid()
+                md5_with_time = uid()
+                mock_read_md5_with_times.return_value = md5_with_time
+
+                def safe_write(slf, file, write, name):
+                    mock_write_md5_with_time_dict.assert_not_called()
+                    self.assertEqual((slf, file, name()), (subj, '%s/.log' % path, 'create %s/.log' % path))
+                    fd = uid()
+
+                    write(fd)
+                    mock_write_md5_with_time_dict.assert_called_once_with(fd, md5_with_time)
+                    return is_safe_write
+
+                mock_safe_write.side_effect = safe_write
+
+                subj.check_dir(path)
+
+                mock_read_md5_with_times.assert_called_once_with(path)
+                mock_safe_write.assert_called_once_with(subj, path + '/.log', mock.ANY, mock.ANY)
+                if is_safe_write:
+                    mock_slow_check_dir.assert_called_once_with(path, md5_with_time)
+                else:
+                    mock_slow_check_dir.assert_not_called()
+
+    @patch('backup.os', autospec=True)
+    @patch.object(backup, 'load_md5_with_times', spec=backup.load_md5_with_times)
+    @patch.object(Backup, 'read_dir_md5_with_time', spec=Backup.read_dir_md5_with_time)
+    def test_read_md5_with_times(self, mock_read_dir_md5_with_time, mock_load_md5_with_times, mock_os):
+        subj = Backup()
+        directory = 'dir-%s' % uid()
+        log_md5_with_time = uid()
+        mock_load_md5_with_times.return_value = log_md5_with_time
+        walk = [('root-%s' % uid(), 'dirs-%s' % uid(), ['file-%s' % uid() for _ in range(0, 3 + uid(5))])
+                for _ in range(0, 3 + uid(5))]
+        mock_os.walk.return_value = walk
+        dir_md5_with_time = [{'key-%s' % uid(): 'value-%s' % uid() for _ in range(0, 3 + uid(5))}
+                             for _ in range(0, len(walk))]
+        mock_read_dir_md5_with_time.side_effect = dir_md5_with_time
+        expected = {}
+        for i in dir_md5_with_time:
+            expected.update(i)
+        expected_calls = [call(directory, root, set(files), log_md5_with_time) for root, dirs, files in walk]
+
+        self.assertEqual(subj.read_md5_with_times(directory), expected)
+
+        mock_load_md5_with_times.assert_called_once_with(directory + '/.log')
+        mock_os.walk.assert_called_once_with(directory)
+        mock_read_dir_md5_with_time.assert_has_calls(expected_calls)
+
     @patch("backup.time", autospec=True)
     @patch("backup.log", autospec=True)
-    def test_full(self, mock_log, mock_time):
+    def _test_full(self, mock_log, mock_time):
         now = uid_time()
         mock_time.time.return_value = now
         mock_log.debug = Mock()
@@ -284,12 +511,16 @@ def uid_sequence():
 uid_sequence_value = uid_sequence()
 
 
-def uid():
-    return next(uid_sequence_value)
+def uid(n=None):
+    return next(uid_sequence_value) if n is None else next(uid_sequence_value) % n
 
 
 def uid_time():
     return time.time() - uid() * 3600 * 24  # каждый вызов возвращает время на день раньше
+
+
+def uid_datetime():
+    return datetime.now(tz=timezone.utc) - timedelta(hours=uid())
 
 
 def time_to_iso(t):

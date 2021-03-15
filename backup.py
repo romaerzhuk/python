@@ -3,6 +3,8 @@
 
 from __future__ import with_statement
 
+import atexit
+import fcntl
 import functools
 import hashlib
 import json
@@ -16,6 +18,9 @@ import subprocess
 import sys
 import time
 import traceback
+from contextlib import contextmanager
+from datetime import datetime
+from datetime import timezone
 from email.mime.text import MIMEText
 
 
@@ -50,24 +55,25 @@ class StopWatch:
 def stop_watch(msg, func):
     """ Засекает время выполнения команды """
     start = time.time()
-    func()
+    result = func()
     log.info("[%s]: %1.3f sec", msg, time.time() - start)
+    return result
 
 
-def md5sum(path, input_stream=None, out=None, stop_watch_type=StopWatch):
+def md5sum(path, input_stream=None, out=None, is_stop_watch=True, multiplier=None):
     """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
+    def md5_by_path():
+        return with_open(path, 'rb', lambda f: md5sum(path, f, out=out, multiplier=multiplier))
+
     if input_stream is None:
         if not os.path.isfile(path):
             return None
-        sw = None if stop_watch_type is None else stop_watch_type("md5sum -b %s" % path)
-        with open(path, "rb") as input_stream:
-            checksum = md5sum(path, input_stream)
-            if sw is not None:
-                sw.stop()
-            return checksum
+        return stop_watch('md5sum -b %s' % path, md5_by_path) if is_stop_watch else md5_by_path()
+
     checksum = hashlib.md5()
     while True:
-        buf = input_stream.read(1024 * 1024)
+        n = multiplier() if multiplier is not None else 1024
+        buf = input_stream.read(1024 * n)
         if len(buf) == 0:
             return checksum.hexdigest().lower()
         checksum.update(buf)
@@ -111,6 +117,27 @@ def load_md5(path):
     return lines, file_time
 
 
+def load_md5_with_times(path):
+    """ Возвращает dict множество контрольных сумм md5 из файла и время подсчёта md5 каждого файла """
+    if not os.path.isfile(path):
+        return {}
+
+    def read(fd):
+        pattern = re.compile(r'^(\S+)\s+(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+[+-]\d\d:\d\d)\s+(.+)$')
+        result = {}
+        for line in fd:
+            m = pattern.match(line)
+            if m is not None:
+                try:
+                    t = datetime.fromisoformat(m.group(2))
+                    result[m.group(3)] = (m.group(1).lower(), t)
+                except ValueError:
+                    pass
+        return result
+
+    return with_open(path, 'r', read)
+
+
 def mkdirs(path):
     """  Создаёт вложенные директории.
     Если директории уже существуют, ничего не делает """
@@ -126,6 +153,12 @@ def read_line(file):
     """ Возвращает первую строку из файла """
     with open(file, encoding='UTF-8') as fd:
         return fd.readline()
+
+
+def with_open(path, mode, handler):
+    """ Открывает файл и передаёт управление в handler """
+    with open(path, mode, encoding=None if 'b' in mode else 'UTF-8') as f:
+        return handler(f)
 
 
 def dir_contains(directory, dirs, files):
@@ -508,7 +541,7 @@ class Backup:
     def command(self):
         """ Вычисляет выполняемый метод """
         command = self.arg()
-        num = None
+        src_dirs, dest_dirs, num = '', None, None
         if "full" == command:
             method = self.full
             src_dirs = self.arg()
@@ -520,20 +553,16 @@ class Backup:
             dest_dirs = self.arg()
         elif "clone" == command:
             method = self.clone
-            src_dirs = ""
             dest_dirs = self.arg()
             num = int(self.arg())
         elif "git" == command:
             method = self.git
             src_dirs = self.arg()
-            dest_dirs = None
         elif 'checks' == command:
             method = self.checks
-            src_dirs = self.arg()
-            dest_dirs = None
+            dest_dirs = self.arg()
         else:
             method = self.help
-            src_dirs, dest_dirs = "", None
         self.hostname = self.config.get('hostname')
         if self.hostname is None:
             self.hostname = socket.gethostname()
@@ -619,11 +648,6 @@ class Backup:
         """ Выполняет fetch Git-репозиториев, и push, если настроен mirror push """
         for src in self.src_dirs:
             self.backup(src)
-
-    @staticmethod
-    def checks():
-        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
-        pass
 
     def backup(self, src):
         """ Создаёт резервные копии директории """
@@ -751,9 +775,9 @@ class Backup:
                 k = key + '/' + name
                 path = dst + k
                 if os.path.isdir(path):
-                    log.debug('enter into self.recoveryDirs(%s)', k)
+                    log.debug('enter into self.recovery_dirs(%s)', k)
                     self.recovery_dirs(k)
-                    log.debug('leave from self.recoveryDirs(%s)', k)
+                    log.debug('leave from self.recovery_dirs(%s)', k)
                 elif os.path.isfile(path):
                     if name.endswith(".md5"):
                         if name != ".md5":
@@ -810,6 +834,87 @@ class Backup:
                 self.lazy_remove(dst, key + '/' + rec.name)
         for dst in md5dirs:
             self.lazy_write_md5(dst, key, md5files)
+
+    def checks(self):
+        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
+        for path in self.dest_dirs:
+            with_lock_file(path + '/.lock', lambda: self.check_dir(path))
+
+    def check_dir(self, directory):
+        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
+        md5_with_time = self.read_md5_with_times(directory)
+        if self.safe_write(directory + '/.log',  # быстро перезаписывает лог-файл
+                           lambda fd: self.write_md5_with_time_dict(fd, md5_with_time),
+                           lambda: 'create %s/.log' % directory):
+            self.slow_check_dir(directory, md5_with_time)
+
+    @classmethod
+    def read_md5_with_times(cls, directory):
+        """ Возвращает контрольные суммы из лога и файлов *.md5 во всех вложенных директориях """
+        log_md5_with_time = load_md5_with_times(directory + '/.log')
+        new_md5_with_time = {}
+
+        for root, dirs, files in os.walk(directory):
+            new_md5_with_time.update(cls.read_dir_md5_with_time(directory, root, set(files), log_md5_with_time))
+
+        return new_md5_with_time
+
+    @classmethod
+    def read_dir_md5_with_time(cls, backup_dir, directory, files, log_md5_with_time):
+        """ Возвращает контрольные суммы из лога и файлов *.md5 в директории """
+        prefix = directory[len(backup_dir) + 1:] + '/'
+        dir_md5_with_time = {}
+
+        for path in log_md5_with_time:
+            if not path.startswith(prefix):
+                continue
+            name = path[len(prefix):]
+            if name in files:
+                dir_md5_with_time[path] = log_md5_with_time[path]
+
+        # дописывает в dir_md5_with_time записи из файлов *.md5
+        for md5_name in filter(lambda f: f.endswith('.md5'), files):
+            md5_sums = load_md5(directory + '/' + md5_name)[0]
+            for name, checksum in filter(lambda f: f in files, md5_sums.items()):
+                path = directory + '/' + name
+                sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+                if name not in dir_md5_with_time or sum_time > dir_md5_with_time[path][1]:
+                    dir_md5_with_time[path] = (checksum, sum_time)
+
+        return dir_md5_with_time
+
+    @classmethod
+    def slow_check_dir(cls, path, md5_with_time):
+        """ Медленно пересчитывает контрольные суммы, чтоб не создавать нагрузку на систему """
+        for key in cls.sorted_md5_with_time_by_time(md5_with_time):
+            md5_sum = md5_with_time[key][0]
+            sum_time = datetime.now(timezone.utc)
+            s = md5sum(path + '/' + key, multiplier=cls.with_sleep_multiplier)
+            if s != md5_sum:
+                s = 'corrupted'
+            with_open(path + '/.log', 'ab', lambda fd: cls.write_md5_with_time(fd, key, s, sum_time))
+
+    @classmethod
+    def write_md5_with_time_dict(cls, fd, md5_with_time):
+        """ Перезаписывает лог-файл с контрольными суммами md5 """
+        for k in cls.sorted_md5_with_time_by_time(md5_with_time):
+            md5_sum, sum_time = md5_with_time[k]
+            cls.write_md5_with_time(fd, k, md5_sum, sum_time)
+
+    @staticmethod
+    def write_md5_with_time(fd, key, checksum, sum_time):
+        """ Записывает в лог-файл одну запись"""
+        fd.write(bytes('%s %s %s\n' % (checksum, sum_time.isoformat(), key), 'utf-8'))
+
+    @staticmethod
+    def with_sleep_multiplier():
+        """ Спит 10 ms каждые 4 кБайт. 1 ГБайт обработает не менее чем за 43 минуты """
+        time.sleep(0.01)
+        return 4
+
+    @staticmethod
+    def sorted_md5_with_time_by_time(md5_with_time):
+        return sorted(md5_with_time, key=lambda k: md5_with_time[k][1])
 
     def recovery_entry(self, name):
         """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """
@@ -909,14 +1014,13 @@ class Backup:
             stored, file_time = self.stored_checksum(path)
             if file_time is None or not real_only and self.checked < file_time:
                 return stored, False
-            # noinspection PyTypeChecker
-            real = md5sum(path, stop_watch_type=None)
+            real = md5sum(path, is_stop_watch=False)
             if stored != real:
                 stored = None
             self.checksum_by_path[path] = (stored, None)
             return stored, True
         except Exception as e:
-            self.error("new_checksum_by_path check error: %s", e)
+            self.error("new checksum_by_path check error: %s", e)
             self.checksum_by_path[path] = (None, None)
             return None, False
 
@@ -955,6 +1059,31 @@ class Backup:
             self.arg_index += 1
             return arg
         self.help()
+
+
+def with_lock_file(path, handler):
+    def lock(fd):
+        if lock_file(fd, fcntl.LOCK_EX | fcntl.LOCK_NB):
+            remove = atexit.register(lambda: remove_file(path))
+            handler()
+            return remove
+        return None
+
+    try:
+        rm = with_open(path, 'xb', lock)
+    except FileExistsError:
+        rm = with_open(path, 'r+b', lock)
+    if rm is not None:
+        remove_file(path)
+        atexit.unregister(rm)
+
+
+def lock_file(fd, cmd):
+    try:
+        fcntl.lockf(fd, cmd)
+        return True
+    except IOError:
+        return False
 
 
 if __name__ == '__main__':
