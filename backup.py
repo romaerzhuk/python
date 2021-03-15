@@ -4,7 +4,6 @@
 from __future__ import with_statement
 
 import atexit
-import fcntl
 import functools
 import hashlib
 import json
@@ -18,7 +17,6 @@ import subprocess
 import sys
 import time
 import traceback
-from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 from email.mime.text import MIMEText
@@ -865,14 +863,14 @@ class Backup:
         prefix = directory[len(backup_dir) + 1:] + '/'
         dir_md5_with_time = {}
 
-        for path in log_md5_with_time:
-            if not path.startswith(prefix):
-                continue
-            name = path[len(prefix):]
-            if name in files:
-                dir_md5_with_time[path] = log_md5_with_time[path]
+        for path in filter(lambda f: f.startswith(prefix) and f[len(prefix):] in files, log_md5_with_time):
+            dir_md5_with_time[path] = log_md5_with_time[path]
 
-        # дописывает в dir_md5_with_time записи из файлов *.md5
+        return cls.update_dir_md5_with_time(dir_md5_with_time, directory, files)
+
+    @staticmethod
+    def update_dir_md5_with_time(dir_md5_with_time, directory, files):
+        """ Дописывает в dir_md5_with_time записи из файлов *.md5 """
         for md5_name in filter(lambda f: f.endswith('.md5'), files):
             md5_sums = load_md5(directory + '/' + md5_name)[0]
             for name, checksum in filter(lambda f: f in files, md5_sums.items()):
@@ -880,7 +878,6 @@ class Backup:
                 sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
                 if name not in dir_md5_with_time or sum_time > dir_md5_with_time[path][1]:
                     dir_md5_with_time[path] = (checksum, sum_time)
-
         return dir_md5_with_time
 
     @classmethod
@@ -1063,7 +1060,7 @@ class Backup:
 
 def with_lock_file(path, handler):
     def lock(fd):
-        if lock_file(fd, fcntl.LOCK_EX | fcntl.LOCK_NB):
+        if lock_file(fd):
             remove = atexit.register(lambda: remove_file(path))
             handler()
             return remove
@@ -1078,9 +1075,11 @@ def with_lock_file(path, handler):
         atexit.unregister(rm)
 
 
-def lock_file(fd, cmd):
+def lock_file(fd):
+    # noinspection PyCompatibility
+    import fcntl
     try:
-        fcntl.lockf(fd, cmd)
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
     except IOError:
         return False

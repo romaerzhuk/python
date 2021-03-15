@@ -3,7 +3,6 @@ import logging
 import math
 import os.path
 import time
-from functools import reduce
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -148,7 +147,7 @@ class BackupUnitTest(TestCase):
                 def uid_spaces():
                     return ' ' * (1 + uid(3)) + '\t' * (uid(3))
 
-                expected = {'name-%s' % uid() : ('sum-%s' % uid(), uid_datetime()) for _ in range(0, 5)}
+                expected = {'name-%s' % uid(): ('sum-%s' % uid(), uid_datetime()) for _ in uid_range()}
                 data = [expected[key][0] + uid_spaces() + expected[key][1].isoformat() + uid_spaces() + key
                         for key in expected]
                 data.insert(1, 'sum-%s no matched value name-%s' % (uid(), uid()))
@@ -266,8 +265,8 @@ class BackupTest(TestCase):
                     mock_time_separator.reset_mock()
                     mock_svn_separator.reset_mock()
                     subj.commands = {}
-                    src_dirs = ['src%s-%s' % (i, uid()) for i in range(0, 3)]
-                    dest_dirs = ['dst%s-%s' % (i, uid()) for i in range(0, 3)]
+                    src_dirs = ['src%s-%s' % (i, uid()) for i in uid_range()]
+                    dest_dirs = ['dst%s-%s' % (i, uid()) for i in uid_range()]
                     num = uid()
                     command_line = [command]
                     if has_src_dirs:
@@ -406,7 +405,7 @@ class BackupTest(TestCase):
     @patch.object(backup, 'with_lock_file', spec=backup.with_lock_file)
     def test_checks(self, mock_with_lock_file, mock_check_dir):
         subj = Backup()
-        dirs = ['dir-%s' % uid() for _ in range(0, 3 + uid(5))]
+        dirs = ['dir-%s' % uid() for _ in uid_range()]
         subj.dest_dirs = dirs
         index = 0
 
@@ -470,8 +469,8 @@ class BackupTest(TestCase):
         directory = 'dir-%s' % uid()
         log_md5_with_time = uid()
         mock_load_md5_with_times.return_value = log_md5_with_time
-        walk = [('root-%s' % uid(), 'dirs-%s' % uid(), ['file-%s' % uid() for _ in range(0, 3 + uid(5))])
-                for _ in range(0, 3 + uid(5))]
+        walk = [('root-%s' % uid(), 'dirs-%s' % uid(), ['file-%s' % uid() for _ in uid_range()])
+                for _ in uid_range()]
         mock_os.walk.return_value = walk
         dir_md5_with_time = [{'key-%s' % uid(): 'value-%s' % uid() for _ in range(0, 3 + uid(5))}
                              for _ in range(0, len(walk))]
@@ -486,6 +485,27 @@ class BackupTest(TestCase):
         mock_load_md5_with_times.assert_called_once_with(directory + '/.log')
         mock_os.walk.assert_called_once_with(directory)
         mock_read_dir_md5_with_time.assert_has_calls(expected_calls)
+
+    @patch.object(Backup, 'update_dir_md5_with_time', spec=Backup.update_dir_md5_with_time)
+    def test_read_dir_md5_with_time(self, mock_update_dir_md5_with_time):
+        subj = Backup()
+        backup_dir = 'backup-%s' % uid()
+        prefix = 'prefix-%s' % uid()
+        directory = backup_dir + '/' + prefix
+        targets = ['file-%s' % uid() for _ in uid_range()]  # целевые файлы
+        files = targets + ['file-%s' % uid() for _ in uid_range()]  # + другие файлы в каталоге
+        dir_md5_with_time = {prefix + '/' + f: uid() for f in targets}  # целевой результат
+        log_md5_with_time = dir_md5_with_time.copy()
+        log_md5_with_time.update({f: uid() for f in [  # файлы в других директориях игнорируются
+            'dir-%s/file-%s' % (uid(), uid()) for _ in uid_range()]})
+        log_md5_with_time.update({prefix + '/file-%s' % uid(): uid()
+                                  for _ in uid_range()})   # файлы с этой директории, которых уже нет игнорируются
+        expected = uid()
+        mock_update_dir_md5_with_time.return_value = expected
+
+        self.assertEquals(subj.read_dir_md5_with_time(backup_dir, directory, files, log_md5_with_time), expected)
+
+        mock_update_dir_md5_with_time.assert_called_once_with(dir_md5_with_time, directory, files)
 
     @patch("backup.time", autospec=True)
     @patch("backup.log", autospec=True)
@@ -521,6 +541,10 @@ def uid_time():
 
 def uid_datetime():
     return datetime.now(tz=timezone.utc) - timedelta(hours=uid())
+
+
+def uid_range():
+    return range(0, 3 + uid(5))
 
 
 def time_to_iso(t):
