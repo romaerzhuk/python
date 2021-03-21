@@ -492,20 +492,150 @@ class BackupTest(TestCase):
         backup_dir = 'backup-%s' % uid()
         prefix = 'prefix-%s' % uid()
         directory = backup_dir + '/' + prefix
-        targets = ['file-%s' % uid() for _ in uid_range()]  # целевые файлы
-        files = targets + ['file-%s' % uid() for _ in uid_range()]  # + другие файлы в каталоге
+        targets = ['file-%s.any%s' % (uid(), uid()) for _ in uid_range()]  # целевые файлы
+        md5_files = ['file-%s.md5' % uid() for _ in uid_range()]  # файлы .md5
+        files = targets + md5_files + ['file-%s.any%s' % (uid(), uid()) for _ in uid_range()]  # + другие файлы
         dir_md5_with_time = {prefix + '/' + f: uid() for f in targets}  # целевой результат
         log_md5_with_time = dir_md5_with_time.copy()
         log_md5_with_time.update({f: uid() for f in [  # файлы в других директориях игнорируются
             'dir-%s/file-%s' % (uid(), uid()) for _ in uid_range()]})
-        log_md5_with_time.update({prefix + '/file-%s' % uid(): uid()
+        log_md5_with_time.update({prefix + '/file-%s.any%s' % (uid(), uid()): uid()
                                   for _ in uid_range()})   # файлы с этой директории, которых уже нет игнорируются
-        expected = uid()
-        mock_update_dir_md5_with_time.return_value = expected
+        expected_calls = [call(dir_md5_with_time, directory, i, files) for i in md5_files]
 
-        self.assertEquals(subj.read_dir_md5_with_time(backup_dir, directory, files, log_md5_with_time), expected)
+        self.assertEqual(subj.read_dir_md5_with_time(backup_dir, directory, files, log_md5_with_time),
+                         dir_md5_with_time)
 
-        mock_update_dir_md5_with_time.assert_called_once_with(dir_md5_with_time, directory, files)
+        mock_update_dir_md5_with_time.assert_has_calls(expected_calls)
+
+    @patch('backup.os.path', autospec=True)
+    @patch.object(backup, 'load_md5', spec=backup.load_md5)
+    def test_update_dir_md5_with_time(self, mock_load_md5, mock_path):
+        subj = Backup()
+        directory = 'dir-%s' % uid()
+        logged = ['file-%s' % uid() for _ in uid_range()]  # файлы, которых нет в директории
+        lost = ['file-%s' % uid() for _ in uid_range()]  # файлы, для которых нет сумм в log-е
+        less = ['file-%s' % uid() for _ in uid_range()]  # файлы с временем модификации < времени в log-е
+        equal = ['file-%s' % uid() for _ in uid_range()]  # файлы с временем модификации == времени в log-е
+        greater = ['file-%s' % uid() for _ in uid_range()]  # файлы с временем модификации > времени в log-е
+        md5_sums = {f: uid() for f in lost + greater + equal + less}
+
+        def path(f):
+            return directory + '/' + f
+
+        dir_md5_with_time = {path(f): (uid(), uid_datetime()) for f in logged + less + equal + greater}
+
+        def log_date_time(f):
+            return dir_md5_with_time[path(f)][1]
+
+        getmtime = {path(f): log_date_time(f) - timedelta(seconds=uid()) for f in less}
+        getmtime.update({path(f): log_date_time(f) for f in equal})
+        getmtime.update({path(f): log_date_time(f) + timedelta(seconds=uid()) for f in greater})
+        getmtime.update({path(f): uid_datetime() for f in lost})
+        mock_path.getmtime.side_effect = lambda f: getmtime[f].timestamp()
+
+        name = 'file-%s' % uid()
+        mock_load_md5.return_value = (md5_sums, uid())
+        files = lost + less + equal + greater + ['file-%s' % uid() for _ in uid_range()]  # + другие файлы
+        expected = dir_md5_with_time.copy()
+        expected.update({path(f): (md5_sums[f], getmtime[path(f)])
+                         for f in lost + greater})
+
+        subj.update_dir_md5_with_time(dir_md5_with_time, directory, name, files)
+
+        self.assertEqual(dir_md5_with_time.keys() - expected.keys(), set())
+        self.assertEqual(expected.keys() - dir_md5_with_time.keys(), set())
+        diff = {f: (expected[f], dir_md5_with_time[f])
+                for f in filter(lambda f: expected[f] != dir_md5_with_time[f], expected.keys())}
+        self.assertEqual(diff, {})
+        self.assertEqual(dir_md5_with_time, expected)
+
+    @patch.object(Backup, 'sorted_md5_with_time_by_time', spec=Backup.sorted_md5_with_time_by_time)
+    @patch.object(Backup, 'write_md5_with_time', spec=Backup.write_md5_with_time)
+    @patch.object(backup, 'with_open', spec=backup.with_open)
+    @patch.object(backup, 'md5sum', spec=backup.md5sum)
+    @patch('backup.datetime', autospec=True)
+    def test_slow_check_dir(self, mock_datetime, mock_md5sum, mock_with_open,
+                            mock_write_md5_with_time, mock_sorted_md5_with_time_by_time):
+        subj = Backup()
+        path = 'path-%s' % uid()
+        keys = ['key-%s' % uid() for _ in uid_range()]
+        mock_sorted_md5_with_time_by_time.return_value = keys
+        md5_with_time = {k: (uid(), uid()) for k in keys}
+        times = [uid_datetime() for _ in keys]
+        mock_datetime.now.side_effect = times
+        corrupted_index = uid(len(keys))
+        mock_md5sum.side_effect = [uid() if i == corrupted_index else md5_with_time[keys[i]][0]
+                                   for i in range(0, len(keys))]
+        lines = ['line-%s' % uid() for _ in keys]
+        mock_write_md5_with_time.side_effect = lines
+        index = 0
+        fd = ['fd-%s' % uid() for _ in keys]
+
+        def md5_sum(i):
+            return 'corrupted' if i == corrupted_index else md5_with_time[keys[i]][0]
+
+        def with_open(file, mode, handler):
+            nonlocal index
+            mock_write_md5_with_time.assert_has_calls([call(fd[i], keys[i], md5_sum(i), times[i])
+                                                       for i in range(0, index)])
+
+            self.assertEqual(handler(fd[index]), lines[index])
+            index += 1
+            mock_write_md5_with_time.assert_has_calls([call(fd[i], keys[i], md5_sum(i), times[i])
+                                                       for i in range(0, index)])
+
+        mock_with_open.side_effect = with_open
+
+        subj.slow_check_dir(path, md5_with_time)
+
+        mock_sorted_md5_with_time_by_time.assert_called_once_with(md5_with_time)
+        mock_datetime.now.assert_has_calls([call(timezone.utc) for _ in keys])
+        mock_md5sum.assert_has_calls([call(path + '/' + k, multiplier=subj.with_sleep_multiplier) for k in keys])
+        mock_with_open.assert_has_calls([call(path + '/.log', 'ab', mock.ANY) for _ in keys])
+
+    @patch.object(Backup, 'sorted_md5_with_time_by_time', spec=Backup.sorted_md5_with_time_by_time)
+    @patch.object(Backup, 'write_md5_with_time', spec=Backup.write_md5_with_time)
+    def test_write_md5_with_time_dict(self, mock_write_md5_with_time, mock_sorted_md5_with_time_by_time):
+        subj = Backup()
+        fd = 'fd-%s' % uid()
+        keys = ['key-%s' % uid() for _ in uid_range()]
+        mock_sorted_md5_with_time_by_time.return_value = keys
+        md5_with_time = {k: ('sum-%s' % uid(), 'time-%s' % uid()) for k in keys}
+
+        subj.write_md5_with_time_dict(fd, md5_with_time)
+
+        mock_sorted_md5_with_time_by_time.assert_called_once_with(md5_with_time)
+        mock_write_md5_with_time.assert_has_calls([call(fd, k, md5_with_time[k][0], md5_with_time[k][1]) for k in keys])
+
+    @staticmethod
+    def test_write_md5_with_time():
+        subj = Backup()
+        fd = Mock(name='fd')
+        key = 'key-%s' % uid()
+        checksum = 'sum-%s' % uid()
+        sum_time = uid_datetime()
+
+        subj.write_md5_with_time(fd, key, checksum, sum_time)
+
+        fd.write.assert_called_once_with(bytes(checksum + ' ' + sum_time.isoformat() + ' ' + key + '\n', 'UTF-8'))
+
+    @patch("backup.time", autospec=True)
+    def test_with_sleep_multiplier(self, mock_time):
+        subj = Backup()
+        self.assertEqual(subj.with_sleep_multiplier(), 4)
+        mock_time.sleep.assert_called_once_with(0.01)
+
+    def test_sorted_md5_with_time_by_time(self):
+        subj = Backup()
+        key1 = 'key1-%s' % uid()
+        key2 = 'key2-%s' % uid()
+        key3 = 'key3-%s' % uid()
+        keys = [key3, key1, key2]
+        md5_with_time = {k: (uid(), uid_datetime()) for k in keys}
+        keys.reverse()
+
+        self.assertEqual(subj.sorted_md5_with_time_by_time(md5_with_time), keys)
 
     @patch("backup.time", autospec=True)
     @patch("backup.log", autospec=True)
@@ -544,7 +674,7 @@ def uid_datetime():
 
 
 def uid_range():
-    return range(0, 3 + uid(5))
+    return range(0, 2 + uid(3))
 
 
 def time_to_iso(t):

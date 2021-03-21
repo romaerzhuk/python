@@ -866,19 +866,20 @@ class Backup:
         for path in filter(lambda f: f.startswith(prefix) and f[len(prefix):] in files, log_md5_with_time):
             dir_md5_with_time[path] = log_md5_with_time[path]
 
-        return cls.update_dir_md5_with_time(dir_md5_with_time, directory, files)
+        for name in filter(lambda f: f.endswith('.md5'), files):
+            cls.update_dir_md5_with_time(dir_md5_with_time, directory, name, files)
+
+        return dir_md5_with_time
 
     @staticmethod
-    def update_dir_md5_with_time(dir_md5_with_time, directory, files):
-        """ Дописывает в dir_md5_with_time записи из файлов *.md5 """
-        for md5_name in filter(lambda f: f.endswith('.md5'), files):
-            md5_sums = load_md5(directory + '/' + md5_name)[0]
-            for name, checksum in filter(lambda f: f in files, md5_sums.items()):
-                path = directory + '/' + name
-                sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
-                if name not in dir_md5_with_time or sum_time > dir_md5_with_time[path][1]:
-                    dir_md5_with_time[path] = (checksum, sum_time)
-        return dir_md5_with_time
+    def update_dir_md5_with_time(dir_md5_with_time, directory, md5_name, files):
+        """ Дописывает в dir_md5_with_time записи из файла *.md5 """
+        md5_sums = load_md5(directory + '/' + md5_name)[0]
+        for name, checksum in filter(lambda i: i[0] in files, md5_sums.items()):
+            path = directory + '/' + name
+            sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+            if path not in dir_md5_with_time or sum_time > dir_md5_with_time[path][1]:
+                dir_md5_with_time[path] = (checksum, sum_time)
 
     @classmethod
     def slow_check_dir(cls, path, md5_with_time):
@@ -901,7 +902,7 @@ class Backup:
     @staticmethod
     def write_md5_with_time(fd, key, checksum, sum_time):
         """ Записывает в лог-файл одну запись"""
-        fd.write(bytes('%s %s %s\n' % (checksum, sum_time.isoformat(), key), 'utf-8'))
+        fd.write(bytes('%s %s %s\n' % (checksum, sum_time.isoformat(), key), 'UTF-8'))
 
     @staticmethod
     def with_sleep_multiplier():
