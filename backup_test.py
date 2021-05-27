@@ -488,31 +488,37 @@ class BackupTest(TestCase):
 
     @patch.object(Backup, 'update_dir_md5_with_time', spec=Backup.update_dir_md5_with_time)
     def test_read_dir_md5_with_time(self, mock_update_dir_md5_with_time):
-        subj = Backup()
-        backup_dir = 'backup-%s' % uid()
-        prefix = 'prefix-%s' % uid()
-        directory = backup_dir + '/' + prefix
-        targets = ['file-%s.any%s' % (uid(), uid()) for _ in uid_range()]  # целевые файлы
-        md5_files = ['file-%s.md5' % uid() for _ in uid_range()]  # файлы .md5
-        files = targets + md5_files + ['file-%s.any%s' % (uid(), uid()) for _ in uid_range()]  # + другие файлы
-        dir_md5_with_time = {prefix + '/' + f: uid() for f in targets}  # целевой результат
-        log_md5_with_time = dir_md5_with_time.copy()
-        log_md5_with_time.update({f: uid() for f in [  # файлы в других директориях игнорируются
-            'dir-%s/file-%s' % (uid(), uid()) for _ in uid_range()]})
-        log_md5_with_time.update({prefix + '/file-%s.any%s' % (uid(), uid()): uid()
-                                  for _ in uid_range()})   # файлы с этой директории, которых уже нет игнорируются
-        expected_calls = [call(dir_md5_with_time, directory, i, files) for i in md5_files]
+        for is_same_dir in (False, True):
+            with self.subTest(is_same_dir=is_same_dir):
+                mock_update_dir_md5_with_time.reset_mock()
+                subj = Backup()
+                backup_dir = 'backup-%s' % uid()
+                prefix = '' if is_same_dir else 'prefix-%s' % uid()
+                directory = backup_dir if is_same_dir else backup_dir + '/' + prefix
+                if not is_same_dir:
+                    prefix += '/'
+                targets = ['file-%s.any%s' % (uid(), uid()) for _ in uid_range()]  # целевые файлы
+                md5_files = ['file-%s.md5' % uid() for _ in uid_range()]  # файлы .md5
+                files = targets + md5_files + ['file-%s.any%s' % (uid(), uid()) for _ in uid_range()]  # + другие файлы
+                dir_md5_with_time = {prefix + f: uid() for f in targets}  # целевой результат
+                log_md5_with_time = dir_md5_with_time.copy()
+                log_md5_with_time.update({f: uid() for f in [  # файлы в других директориях игнорируются
+                    'dir-%s/file-%s' % (uid(), uid()) for _ in uid_range()]})
+                log_md5_with_time.update({prefix + 'file-%s.any%s' % (uid(), uid()): uid()
+                                          for _ in uid_range()})   # файлы, которых уже нет, игнорируются
+                expected_calls = [call(dir_md5_with_time, len(backup_dir) + 1, directory, i, files) for i in md5_files]
 
-        self.assertEqual(subj.read_dir_md5_with_time(backup_dir, directory, files, log_md5_with_time),
-                         dir_md5_with_time)
+                self.assertEqual(subj.read_dir_md5_with_time(backup_dir, directory, files, log_md5_with_time),
+                                 dir_md5_with_time)
 
-        mock_update_dir_md5_with_time.assert_has_calls(expected_calls)
+                mock_update_dir_md5_with_time.assert_has_calls(expected_calls)
 
     @patch('backup.os.path', autospec=True)
     @patch.object(backup, 'load_md5', spec=backup.load_md5)
     def test_update_dir_md5_with_time(self, mock_load_md5, mock_path):
         subj = Backup()
-        directory = 'dir-%s' % uid()
+        backup_dir = 'backup-dir%s' % uid()
+        directory = '%s/dir-%s' % (backup_dir, uid())
         logged = ['file-%s' % uid() for _ in uid_range()]  # файлы, которых нет в директории
         lost = ['file-%s' % uid() for _ in uid_range()]  # файлы, для которых нет сумм в log-е
         less = ['file-%s' % uid() for _ in uid_range()]  # файлы с временем модификации < времени в log-е
@@ -523,10 +529,13 @@ class BackupTest(TestCase):
         def path(f):
             return directory + '/' + f
 
-        dir_md5_with_time = {path(f): (uid(), uid_datetime()) for f in logged + less + equal + greater}
+        def key(f):
+            return path(f)[len(backup_dir) + 1:]
+
+        dir_md5_with_time = {key(f): (uid(), uid_datetime()) for f in logged + less + equal + greater}
 
         def log_date_time(f):
-            return dir_md5_with_time[path(f)][1]
+            return dir_md5_with_time[key(f)][1]
 
         getmtime = {path(f): log_date_time(f) - timedelta(seconds=uid()) for f in less}
         getmtime.update({path(f): log_date_time(f) for f in equal})
@@ -538,10 +547,10 @@ class BackupTest(TestCase):
         mock_load_md5.return_value = (md5_sums, uid())
         files = lost + less + equal + greater + ['file-%s' % uid() for _ in uid_range()]  # + другие файлы
         expected = dir_md5_with_time.copy()
-        expected.update({path(f): (md5_sums[f], getmtime[path(f)])
+        expected.update({key(f): (md5_sums[f], getmtime[path(f)])
                          for f in lost + greater})
 
-        subj.update_dir_md5_with_time(dir_md5_with_time, directory, name, files)
+        subj.update_dir_md5_with_time(dir_md5_with_time, len(backup_dir) + 1, directory, name, files)
 
         self.assertEqual(dir_md5_with_time.keys() - expected.keys(), set())
         self.assertEqual(expected.keys() - dir_md5_with_time.keys(), set())

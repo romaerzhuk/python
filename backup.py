@@ -529,7 +529,7 @@ class Backup:
 
     @staticmethod
     def read_config():
-        """ Выполняет резервное копирование """
+        """ Читает конфигурацию """
         try:
             with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as cfg:
                 return json.load(cfg)
@@ -860,26 +860,28 @@ class Backup:
     @classmethod
     def read_dir_md5_with_time(cls, backup_dir, directory, files, log_md5_with_time):
         """ Возвращает контрольные суммы из лога и файлов *.md5 в директории """
-        prefix = directory[len(backup_dir) + 1:] + '/'
+        backup_dir_len = len(backup_dir) + 1
+        prefix = '' if directory == backup_dir else directory[backup_dir_len:] + '/'
         dir_md5_with_time = {}
 
-        for path in filter(lambda f: f.startswith(prefix) and f[len(prefix):] in files, log_md5_with_time):
-            dir_md5_with_time[path] = log_md5_with_time[path]
+        for key in filter(lambda f: f.startswith(prefix) and f[len(prefix):] in files, log_md5_with_time):
+            dir_md5_with_time[key] = log_md5_with_time[key]
 
         for name in filter(lambda f: f.endswith('.md5'), files):
-            cls.update_dir_md5_with_time(dir_md5_with_time, directory, name, files)
+            cls.update_dir_md5_with_time(dir_md5_with_time, backup_dir_len, directory, name, files)
 
         return dir_md5_with_time
 
     @staticmethod
-    def update_dir_md5_with_time(dir_md5_with_time, directory, md5_name, files):
+    def update_dir_md5_with_time(dir_md5_with_time, backup_dir_len, directory, md5_name, files):
         """ Дописывает в dir_md5_with_time записи из файла *.md5 """
         md5_sums = load_md5(directory + '/' + md5_name)[0]
         for name, checksum in filter(lambda i: i[0] in files, md5_sums.items()):
             path = directory + '/' + name
             sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
-            if path not in dir_md5_with_time or sum_time > dir_md5_with_time[path][1]:
-                dir_md5_with_time[path] = (checksum, sum_time)
+            key = path[backup_dir_len:]
+            if key not in dir_md5_with_time or sum_time > dir_md5_with_time[key][1]:
+                dir_md5_with_time[key] = (checksum, sum_time)
 
     @classmethod
     def slow_check_dir(cls, path, md5_with_time):
