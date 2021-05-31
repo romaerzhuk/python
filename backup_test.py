@@ -401,6 +401,46 @@ class BackupTest(TestCase):
                         server.login.assert_not_called()
                         server.quit.assert_not_called()
 
+    @patch('backup.os', autospec=True)
+    def test_recovery_for_each(self, mock_os):
+        for isdir in (False, True):
+            with self.subTest(isdir=isdir):
+                mock_os.reset_mock()
+                subj = Backup()
+                dst = 'dst-%s' % uid()
+                key = 'key-%s'
+                recovery_key_search = Mock()
+                mock_os.path.isdir.return_value = isdir
+                mock_os.listdir.return_value = listdir = ['name-%s' % uid() for _ in uid_range()]
+
+                subj.recovery_for_each(dst, key, recovery_key_search)
+
+                mock_os.path.isdir.assert_called_once_with(dst + key)
+                if isdir:
+                    mock_os.listdir.assert_called_once_with(dst + key)
+                    recovery_key_search.assert_has_calls([call(dst, name) for name in listdir])
+                else:
+                    mock_os.listdir.assert_not_called()
+                    recovery_key_search.assert_not_called()
+
+    @patch('backup.os', autospec=True)
+    @patch.object(Backup, 'recovery_dirs', autospec=True)
+    @patch.object(Backup, 'recovery_entry', autospec=True)
+    def test_recovery_key_search(self, mock_recovery_entry, mock_recovery_dirs):
+        subj = Backup()
+        dst = 'dst-%s' % uid()
+        key = 'key-%s' % uid()
+        name = 'name-%s' % uid()
+        md5dirs = ['md5dirs-%s' % uid() for _ in uid_range()]
+        file_dict = {'file-%s' % uid():  uid() for _ in uid_range()}
+        recovery = ['recovery-%s' % uid() for _ in uid_range()]
+        indexes = [uid() for _ in uid_range()]
+        lists = {i: ['list-%s' % uid() for _ in uid_range()] for i in indexes}
+
+        subj.recovery_key_search(dst, key, name, md5dirs, file_dict, recovery, lists)
+
+        self.fail("TODO")
+
     @patch.object(Backup, 'check_dir', autospec=True)
     @patch.object(backup, 'with_lock_file', spec=backup.with_lock_file)
     def test_checks(self, mock_with_lock_file, mock_check_dir):
@@ -645,6 +685,18 @@ class BackupTest(TestCase):
         keys.reverse()
 
         self.assertEqual(subj.sorted_md5_with_time_by_time(md5_with_time), keys)
+
+    @patch.object(Backup, 'lazy_write_md5', autospec=True)
+    def test_lazy_write_md5_to_md5dirs(self, mock_lazy_write_md5):
+        subj = Backup()
+        md5dirs = ['dir-%s' % uid() for _ in uid_range()]
+        key = 'key-%s' % uid()
+        md5files = 'md5files-%s' % uid()
+        expected_calls = [call(subj, d, key, md5files) for d in md5dirs]
+
+        subj.lazy_write_md5_to_md5dirs(md5dirs, key, md5files)
+
+        mock_lazy_write_md5.assert_has_calls(expected_calls)
 
     @patch("backup.time", autospec=True)
     @patch("backup.log", autospec=True)

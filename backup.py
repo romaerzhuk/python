@@ -755,40 +755,19 @@ class Backup:
         Удаляет устаревшие копии """
         if key in self.dir_set:
             return
-        log.debug("recovery dir %1s", key)
+        log.debug("recovery dir %s", key)
         self.dir_set.add(key)
         lists, recovery, remove = ([], []), [], []
         file_dict = dict()
         md5dirs = set()
         log.debug('for dst in %s', self.dest_dirs)
-        for dst in self.dest_dirs:
-            log.debug('for dst=%s in %s', dst, self.dest_dirs)
-            path = dst + key
-            if not os.path.isdir(path):
-                log.debug('continue')
-                continue
-            log.debug('for name in %s', os.listdir(path))
-            for name in os.listdir(path):
-                log.debug('for name=%s in os.listdir.path(%s)', name, path)
-                k = key + '/' + name
-                path = dst + k
-                if os.path.isdir(path):
-                    log.debug('enter into self.recovery_dirs(%s)', k)
-                    self.recovery_dirs(k)
-                    log.debug('leave from self.recovery_dirs(%s)', k)
-                elif os.path.isfile(path):
-                    if name.endswith(".md5"):
-                        if name != ".md5":
-                            md5dirs.add(dst)
-                    elif name not in file_dict:
-                        entry, index = self.recovery_entry(name)
-                        file_dict[name] = entry
-                        if index < 0:
-                            log.debug('recovery.append(%s)', name)
-                            recovery.append(entry)
-                        else:
-                            log.debug('lists[%s].append(%s)', index, name)
-                            lists[index].append(entry)
+        self.recovery_for_each_dest(key, lambda dest, file: self.recovery_key_search(dest,
+                                                                                     key + '/' + file,
+                                                                                     file,
+                                                                                     md5dirs,
+                                                                                     file_dict,
+                                                                                     recovery,
+                                                                                     lists))
         if len(file_dict) == 0:
             return
         log.debug('for (name, entry) in in %s', file_dict)
@@ -830,8 +809,55 @@ class Backup:
         for rec in remove:
             for dst in self.dest_dirs:
                 self.lazy_remove(dst, key + '/' + rec.name)
-        for dst in md5dirs:
-            self.lazy_write_md5(dst, key, md5files)
+        self.lazy_write_md5_to_md5dirs(md5dirs, key, md5files)
+
+    def recovery_for_each_dest(self, key, recovery_key_search):
+        """ Вызывает recovery_for_each для всех целевых каталогов """
+        for dst in self.dest_dirs:
+            log.debug('for dst=%s in %s', dst, self.dest_dirs)
+            self.recovery_for_each(dst, key, recovery_key_search)
+
+    @staticmethod
+    def recovery_for_each(dst, key, recovery_key_search):
+        """ Вызывает recovery_key_search для всех дочерних файлов/каталогов """
+        path = dst + key
+        if not os.path.isdir(path):
+            log.debug('continue')
+            return
+        listdir = os.listdir(path)
+        log.debug('for name in %s', listdir)
+        for name in listdir:
+            log.debug('for name=%s in os.listdir.path(%s)', name, path)
+            recovery_key_search(dst, name)
+
+    def recovery_key_search(self, dst, key, name, md5dirs, file_dict, recovery, lists):
+        """
+        Исследует файл/каталог dst + key:
+          * вызывает рекурсивно для дочерних каталогов recovery_dirs;
+          * файлы с контрольными суммами, *.md5;
+          * запоминает в md5dirs каталоги, для которых должны сохраниться контрольные суммы;
+          * RecoveryEntry всех хранимых файлов бэкапов запоминает в file_dict[name];
+          * накапливает в recovery RecoveryEntry файлов, которые безусловно должны остаться в бэкапе;
+          * накапливает в lists RecoveryEntry файлов, которые могут удаляться из бэкапа по условию.
+        """
+        path = dst + key
+        if os.path.isdir(path):
+            log.debug('enter into self.recovery_dirs(%s)', key)
+            self.recovery_dirs(key)
+            log.debug('leave from self.recovery_dirs(%s)', key)
+        elif os.path.isfile(path):
+            if name.endswith(".md5"):
+                if name != ".md5":
+                    md5dirs.add(dst)
+            elif name not in file_dict:
+                entry, index = self.recovery_entry(name)
+                file_dict[name] = entry
+                if index < 0:
+                    log.debug('recovery.append(%s)', name)
+                    recovery.append(entry)
+                else:
+                    log.debug('lists[%s].append(%s)', index, name)
+                    lists[index].append(entry)
 
     def checks(self):
         """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
@@ -937,6 +963,11 @@ class Backup:
         path = dst + key
         log.debug("lazy rm %s", path)
         self.commands[dst].append(lambda: self.remove(path))
+
+    def lazy_write_md5_to_md5dirs(self, md5dirs, key, md5files):
+        """ Выполняет отложенную запись контрольной суммы в каталоги """
+        for dst in md5dirs:
+            self.lazy_write_md5(dst, key, md5files)
 
     def lazy_write_md5(self, dst, key, md5files):
         """ Выполняет отложенную запись контрольной суммы """
