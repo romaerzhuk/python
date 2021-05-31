@@ -401,6 +401,16 @@ class BackupTest(TestCase):
                         server.login.assert_not_called()
                         server.quit.assert_not_called()
 
+    def test_recovery_for_each_dest(self):
+        subj = Backup()
+        key = 'key-%s'
+        recovery_key_search = Mock()
+        # TODO возвращать результат. Перенести конструирование recovery_key_search внутрь recovery_for_each_dest
+
+        subj.recovery_for_each_dest(key, recovery_key_search)
+
+        self.fail("TODO")
+
     @patch('backup.os', autospec=True)
     def test_recovery_for_each(self, mock_os):
         for isdir in (False, True):
