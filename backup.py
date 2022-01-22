@@ -311,6 +311,9 @@ class SvnBackup:
 
     def backup(self, src, dst, prefix):
         """ Снимает резервную копию для одиночного репозитория """
+        if dst is None:
+            log.debug("backup(src=%s, dst=%s, prefix=%s): ignore dst=[%s]", src, dst, prefix, dst)
+            return
         mkdirs(dst)
         log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
         new_rev = self.svn_revision(src)
@@ -422,9 +425,9 @@ class GitBackup:
     @staticmethod
     def git_fsck(src):
         """ Проверяет целостность репоизитория Git """
-        res = system(['git', 'fsck', '--full', '--no-progress'], cwd=src)
+        res = system(['git', 'fsck', '--full', '--strict', '--no-progress'], cwd=src)
         if res != 0:
-            raise IOError('Invalid git repository %s' % os.path.dirname(src))
+            raise IOError('Invalid git repository %s' % src)
 
     def last_modified_with_excludes(self, path):
         """ Запоминает время последней модификации файлов """
@@ -757,21 +760,13 @@ class Backup:
             return
         log.debug("recovery dir %s", key)
         self.dir_set.add(key)
-        lists, recovery, remove = ([], []), [], []
-        file_dict = dict()
-        md5dirs = set()
         log.debug('for dst in %s', self.dest_dirs)
-        self.recovery_for_each_dest(key, lambda dest, file: self.recovery_key_search(dest,
-                                                                                     key + '/' + file,
-                                                                                     file,
-                                                                                     md5dirs,
-                                                                                     file_dict,
-                                                                                     recovery,
-                                                                                     lists))
+        md5dirs, file_dict, recovery, lists = self.recovery_for_each_dest(key)
         if len(file_dict) == 0:
             return
         log.debug('for (name, entry) in in %s', file_dict)
         sw = StopWatch('md5sum -b %s%s/*' % (self.dest_dirs[0], key))
+        remove = []
         for (name, entry) in file_dict.items():
             log.debug(' for (name=%s, entry=%s) in in %s', name, entry, file_dict)
             for dst in self.dest_dirs:
@@ -811,11 +806,21 @@ class Backup:
                 self.lazy_remove(dst, key + '/' + rec.name)
         self.lazy_write_md5_to_md5dirs(md5dirs, key, md5files)
 
-    def recovery_for_each_dest(self, key, recovery_key_search):
+    def recovery_for_each_dest(self, key):
         """ Вызывает recovery_for_each для всех целевых каталогов """
+        md5dirs = set()
+        file_dict = {}
+        recovery = []
+        lists = ([], [])
+
+        def recovery_key_search(dest, file):
+            return self.recovery_key_search(dest, key + '/' + file, file, md5dirs, file_dict, recovery, lists)
+
         for dst in self.dest_dirs:
             log.debug('for dst=%s in %s', dst, self.dest_dirs)
             self.recovery_for_each(dst, key, recovery_key_search)
+
+        return md5dirs, file_dict, recovery, lists
 
     @staticmethod
     def recovery_for_each(dst, key, recovery_key_search):
@@ -849,7 +854,7 @@ class Backup:
             if name.endswith(".md5"):
                 if name != ".md5":
                     md5dirs.add(dst)
-            elif name not in file_dict:
+            elif name not in file_dict and not key in ('/.log', '/.lock'):
                 entry, index = self.recovery_entry(name)
                 file_dict[name] = entry
                 if index < 0:

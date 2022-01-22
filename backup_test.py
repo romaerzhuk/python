@@ -404,10 +404,9 @@ class BackupTest(TestCase):
     def test_recovery_for_each_dest(self):
         subj = Backup()
         key = 'key-%s'
-        recovery_key_search = Mock()
         # TODO возвращать результат. Перенести конструирование recovery_key_search внутрь recovery_for_each_dest
 
-        subj.recovery_for_each_dest(key, recovery_key_search)
+        subj.recovery_for_each_dest(key)
 
         self.fail("TODO")
 
@@ -707,6 +706,9 @@ class BackupTest(TestCase):
         subj.lazy_write_md5_to_md5dirs(md5dirs, key, md5files)
 
         mock_lazy_write_md5.assert_has_calls(expected_calls)
+
+    def test_checksum(self):
+        self.fail("TODO")
 
     @patch("backup.time", autospec=True)
     @patch("backup.log", autospec=True)
