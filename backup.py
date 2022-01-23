@@ -3,10 +3,11 @@
 
 from __future__ import with_statement
 
+import atexit
 import functools
 import hashlib
 import json
-import logging
+import logging as log
 import os
 import platform
 import re
@@ -16,6 +17,8 @@ import subprocess
 import sys
 import time
 import traceback
+from datetime import datetime
+from datetime import timezone
 from email.mime.text import MIMEText
 
 
@@ -47,20 +50,28 @@ class StopWatch:
         log.info("[%s]: %1.3f sec", self.msg, time.time() - self.start)
 
 
-def md5sum(path, input_stream=None, out=None, stop_watch=StopWatch):
+def stop_watch(msg, func):
+    """ Засекает время выполнения команды """
+    start = time.time()
+    result = func()
+    log.info("[%s]: %1.3f sec", msg, time.time() - start)
+    return result
+
+
+def md5sum(path, input_stream=None, out=None, is_stop_watch=True, multiplier=None):
     """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
+    def md5_by_path():
+        return with_open(path, 'rb', lambda f: md5sum(path, f, out=out, multiplier=multiplier))
+
     if input_stream is None:
         if not os.path.isfile(path):
             return None
-        sw = None if stop_watch is None else stop_watch("md5sum -b %s" % path)
-        with open(path, "rb") as input_stream:
-            checksum = md5sum(path, input_stream)
-            if sw is not None:
-                sw.stop()
-            return checksum
+        return stop_watch('md5sum -b %s' % path, md5_by_path) if is_stop_watch else md5_by_path()
+
     checksum = hashlib.md5()
     while True:
-        buf = input_stream.read(1024 * 1024)
+        n = multiplier() if multiplier is not None else 1024
+        buf = input_stream.read(1024 * n)
         if len(buf) == 0:
             return checksum.hexdigest().lower()
         checksum.update(buf)
@@ -104,6 +115,27 @@ def load_md5(path):
     return lines, file_time
 
 
+def load_md5_with_times(path):
+    """ Возвращает dict множество контрольных сумм md5 из файла и время подсчёта md5 каждого файла """
+    if not os.path.isfile(path):
+        return {}
+
+    def read(fd):
+        pattern = re.compile(r'^(\S+)\s+(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+[+-]\d\d:\d\d)\s+(.+)$')
+        result = {}
+        for line in fd:
+            m = pattern.match(line)
+            if m is not None:
+                try:
+                    t = datetime.fromisoformat(m.group(2))
+                    result[m.group(3)] = (m.group(1).lower(), t)
+                except ValueError:
+                    pass
+        return result
+
+    return with_open(path, 'r', read)
+
+
 def mkdirs(path):
     """  Создаёт вложенные директории.
     Если директории уже существуют, ничего не делает """
@@ -119,6 +151,12 @@ def read_line(file):
     """ Возвращает первую строку из файла """
     with open(file, encoding='UTF-8') as fd:
         return fd.readline()
+
+
+def with_open(path, mode, handler):
+    """ Открывает файл и передаёт управление в handler """
+    with open(path, mode, encoding=None if 'b' in mode else 'UTF-8') as f:
+        return handler(f)
 
 
 def dir_contains(directory, dirs, files):
@@ -273,9 +311,12 @@ class SvnBackup:
 
     def backup(self, src, dst, prefix):
         """ Снимает резервную копию для одиночного репозитория """
+        if dst is None:
+            log.debug("backup(src=%s, dst=%s, prefix=%s): ignore dst=[%s]", src, dst, prefix, dst)
+            return
         mkdirs(dst)
         log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
-        new_rev = system(("svn", "info", "file://" + src), self.read_revision)
+        new_rev = self.svn_revision(src)
         md5 = load_md5(dst + "/.md5")[0]
         step = min_rev = 100
         while new_rev >= step - 1 and step < 10000:
@@ -291,6 +332,10 @@ class SvnBackup:
             old_rev = rev
         self.dump(src, dst, prefix, old_rev, new_rev, md5)
         return True
+
+    def svn_revision(self, src):
+        """  Возврщает ревизию репозитория """
+        return system(("svn", "info", "file://" + os.path.abspath(src)), self.read_revision)
 
     def dump(self, src, dst, prefix, old_rev, new_rev, md5):
         """ Запускает svnadmin dump для одиночного репозитория """
@@ -324,7 +369,7 @@ class GitBackup:
     def __init__(self, backup):
         self.last_modified = backup.last_modified
         self.up_to_date = backup.up_to_date
-        self.genericBackup = backup.generic_backup
+        self.generic_backup = backup.generic_backup
         self.excludes = {}
 
     @staticmethod
@@ -375,14 +420,14 @@ class GitBackup:
         system(['git', 'prune'], cwd=src)
         if len(mirrors) == 0:
             self.git_fsck(src)
-        self.genericBackup(src, dst, prefix)
+        self.generic_backup(src, dst, prefix)
 
     @staticmethod
     def git_fsck(src):
         """ Проверяет целостность репоизитория Git """
-        res = system(['git', 'fsck', '--full', '--no-progress'], cwd=src)
+        res = system(['git', 'fsck', '--full', '--strict', '--no-progress'], cwd=src)
         if res != 0:
-            raise IOError('Invalid git repository %s' % os.path.dirname(src))
+            raise IOError('Invalid git repository %s' % src)
 
     def last_modified_with_excludes(self, path):
         """ Запоминает время последней модификации файлов """
@@ -421,11 +466,13 @@ class Backup:
         print("\tdump srcDirs destDirs [-h hostname] -- dumps source directories and writes md5 check sums")
         print("\tclone destDirs numberOfFiles -- checks md5 sums and clone archived files")
         print("\tgit srcDirs -- fetch srcDir Git repositories from remotes and push into remotes when --mirror=push")
+        print("\tchecks destDirs -- checks md5 sums slow for low I/O load")
         print("\nExamples:")
-        print("\tbackup.py full $HOME/src /local/backup,/remote/backup 3")
-        print("\tbackup.py dump $HOME/src,$HOME/bin /var/backup")
+        print("\tbackup.py full $HOME/src1,$HOME/src2 /local/backup,/remote/backup 3")
+        print("\tbackup.py dump $HOME/src1,$HOME/src2 /var/backup")
         print("\tbackup.py clone /local/backup,/remote/backup2 5")
-        print("\tbackup.py git $HOME/src,$HOME/bin")
+        print("\tbackup.py git $HOME/src1,$HOME/src2")
+        print("\tbackup.py checks /local/backup1,/local/backup2")
         print()
         print("Optional config file $HOME/.config/backup/backup.cfg:")
         print("{")
@@ -441,11 +488,61 @@ class Backup:
         print("}")
         sys.exit()
 
-    def __init__(self, config):
+    def __init__(self):
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+        self.config = {}
         self.arg_index = 1
+        self.hostname = None
+        self.smtp_host = None
+        self.smtp_port = None
+        self.smtp_user = None
+        self.smtp_password = None
+        self.from_address = None
+        self.to_address = None
+        # набор способов разделить нужные копии от избыточных
+        self.time_separator = None
+        self.separators = ()
+        self.src_dirs = []
+        self.dest_dirs = []
+        self.dir_set = set()
+        self.new_checksum_by_path = dict()
+        self.checksum_by_path = dict()
+        self.files_checksum_by_dir = dict()
+        self.checksum_file = dict()
+        self.checked = time.time() - 2 * 24 * 3600
+        self.strategies = (SvnBackup(self), GitBackup(self))
+        self.commands = dict()  # команды на копирование/удаление файлов разделённые на директории
+        self.errors = []
+        self.strategy_dir = []
+        self.last_modified_time = -1
+
+    def configure(self):
+        """ Конфигурирует выполнение """
+        self.config = self.read_config()
+        level = log.getLevelName(self.config.get('log_level'))
+        if level == 'Level None':
+            level = log.INFO
+        log_format = self.config.get('log_format')
+        if log_format is None:
+            # log_format = "%(levelname)5s %(lineno)3d %(message)s"
+            log_format = "%(message)s"
+        log.basicConfig(level=level, stream=sys.stdout, format=log_format)
+        sys.setrecursionlimit(100)
+        return self.command()
+
+    @staticmethod
+    def read_config():
+        """ Читает конфигурацию """
+        try:
+            with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as cfg:
+                return json.load(cfg)
+        except IOError:
+            return {}
+
+    def command(self):
+        """ Вычисляет выполняемый метод """
         command = self.arg()
-        num = None
+        src_dirs, dest_dirs, num = '', None, None
         if "full" == command:
             method = self.full
             src_dirs = self.arg()
@@ -457,57 +554,61 @@ class Backup:
             dest_dirs = self.arg()
         elif "clone" == command:
             method = self.clone
-            src_dirs = ""
             dest_dirs = self.arg()
             num = int(self.arg())
         elif "git" == command:
             method = self.git
             src_dirs = self.arg()
-            dest_dirs = None
+        elif 'checks' == command:
+            method = self.checks
+            dest_dirs = self.arg()
         else:
-            self.help()
-            return
-        self.hostname = config.get('hostname')
+            method = self.help
+        self.hostname = self.config.get('hostname')
         if self.hostname is None:
             self.hostname = socket.gethostname()
-        self.smtp_host = config.get('smtp_host')
+        self.smtp_host = self.config.get('smtp_host')
         # набор способов разделить нужные копии от избыточных
-        self.timeSeparator = TimeSeparator(num)
-        self.separators = (self.timeSeparator, SvnSeparator())
-        self.srcDirs = src_dirs.split(',')
-        log.debug("srcDirs=%s", self.srcDirs)
+        self.time_separator = TimeSeparator(num)
+        self.separators = (self.time_separator, SvnSeparator())
+        self.src_dirs = src_dirs.split(',')
+        log.debug("src_dirs=%s", self.src_dirs)
         self.dest_dirs = dest_dirs.split(',') if dest_dirs is not None else []
-        log.debug("destDirs=%s", self.dest_dirs)
-        self.dirSet = set()
-        self.new_checksum_by_path = dict()
-        self.checksum_by_path = dict()
-        self.files_checksum_by_dir = dict()
-        self.checksum_file = dict()
-        self.checked = time.time() - 2 * 24 * 3600
-        self.strategies = (SvnBackup(self), GitBackup(self))
-        self.commands = dict()  # команды на копирование/удаление файлов разделённые на директории
-        self.errors = []
-        self.strategy_dir = []
-        self.last_modified_time = -1
+        log.debug("dest_dirs=%s", self.dest_dirs)
         for directory in self.dest_dirs:
             self.commands[directory] = []
         log.debug("self.commands=%s", self.commands)
+        return method
+
+    def main(self):
+        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
+        stop_watch("backup", self.invoke)
+
+    def invoke(self):
+        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
         # noinspection PyBroadException
         try:
-            method()
+            self.configure()()
         except BaseException:
             self.error("%s", traceback.format_exc())
-        if len(self.errors) > 0:
-            smtp_port = config.get('smtp_port')
-            server = smtplib.SMTP_SSL(self.smtp_host, smtp_port)
-            user = config.get('smtp_user')
-            password = config.get('smtp_password')
+        self.send_errors()
+
+    def send_errors(self):
+        """ Отправляет ошибки на почту """
+        if len(self.errors) == 0:
+            return
+        smtp_port = self.config.get('smtp_port')
+        server = smtplib.SMTP_SSL(self.smtp_host, smtp_port)
+        try:
+            user = self.config.get('smtp_user')
+            password = self.config.get('smtp_password')
             server.login(user, password)
             msg = MIMEText('\n'.join(self.errors), 'plain', 'utf-8')
             msg['Subject'] = "backup error: " + self.hostname
-            msg['From'] = config.get('fromaddr')
-            msg['To'] = config.get('toaddrs')
+            msg['From'] = self.config.get('fromaddr')
+            msg['To'] = self.config.get('toaddrs')
             server.send_message(msg)
+        finally:
             server.quit()
 
     def full(self):
@@ -517,7 +618,7 @@ class Backup:
 
     def dump(self):
         """ Архивирует исходные файлы """
-        for src in self.srcDirs:
+        for src in self.src_dirs:
             self.backup(src)
         dirs = dict()
         for path in self.new_checksum_by_path.keys():
@@ -546,7 +647,7 @@ class Backup:
 
     def git(self):
         """ Выполняет fetch Git-репозиториев, и push, если настроен mirror push """
-        for src in self.srcDirs:
+        for src in self.src_dirs:
             self.backup(src)
 
     def backup(self, src):
@@ -599,9 +700,9 @@ class Backup:
 
     def generic_backup(self, src, dst, prefix):
         """ Полностью архивирует директорию, если не существует актуальной резервной копии """
-        log.debug("genericBackup(%s, %s, %s)", src, dst, prefix)
+        log.debug("generic backup(%s, %s, %s)", src, dst, prefix)
         if dst is None:
-            log.debug('genericBackup: ignore dst=[%s]', dst)
+            log.debug('generic backup: ignore dst=[%s]', dst)
             return
         date = time.strftime("%Y-%m-%d")
         basename = os.path.basename(src)
@@ -622,7 +723,7 @@ class Backup:
             return
         modified = os.path.getmtime(path)
         if modified > self.last_modified_time:
-            log.debug('lastModified %s %s', modified, path)
+            log.debug('last modified %s %s', modified, path)
             self.last_modified_time = modified
 
     def up_to_date(self, src, dst):
@@ -640,7 +741,7 @@ class Backup:
                 if index == 0:  # TimeSeparator
                     log.debug('entry_list.append(%s)', entry)
                     entry_list.append(entry)
-        entry_list = self.timeSeparator.separate(entry_list)[0]
+        entry_list = self.time_separator.separate(entry_list)[0]
         log.debug('list=%s', entry_list)
         if len(entry_list) > 0:
             path = dst + entry_list[0].name
@@ -655,46 +756,17 @@ class Backup:
     def recovery_dirs(self, key):
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
         Удаляет устаревшие копии """
-        if key in self.dirSet:
+        if key in self.dir_set:
             return
-        log.debug("recovery dir %1s", key)
-        self.dirSet.add(key)
-        lists, recovery, remove = ([], []), [], []
-        file_dict = dict()
-        md5dirs = set()
+        log.debug("recovery dir %s", key)
+        self.dir_set.add(key)
         log.debug('for dst in %s', self.dest_dirs)
-        for dst in self.dest_dirs:
-            log.debug('for dst=%s in %s', dst, self.dest_dirs)
-            path = dst + key
-            if not os.path.isdir(path):
-                log.debug('continue')
-                continue
-            log.debug('for name in %s', os.listdir(path))
-            for name in os.listdir(path):
-                log.debug('for name=%s in os.listdir.path(%s)', name, path)
-                k = key + '/' + name
-                path = dst + k
-                if os.path.isdir(path):
-                    log.debug('enter into self.recoveryDirs(%s)', k)
-                    self.recovery_dirs(k)
-                    log.debug('leave from self.recoveryDirs(%s)', k)
-                elif os.path.isfile(path):
-                    if name.endswith(".md5"):
-                        if name != ".md5":
-                            md5dirs.add(dst)
-                    elif name not in file_dict:
-                        entry, index = self.recovery_entry(name)
-                        file_dict[name] = entry
-                        if index < 0:
-                            log.debug('recovery.append(%s)', name)
-                            recovery.append(entry)
-                        else:
-                            log.debug('lists[%s].append(%s)', index, name)
-                            lists[index].append(entry)
+        md5dirs, file_dict, recovery, lists = self.recovery_for_each_dest(key)
         if len(file_dict) == 0:
             return
         log.debug('for (name, entry) in in %s', file_dict)
         sw = StopWatch('md5sum -b %s%s/*' % (self.dest_dirs[0], key))
+        remove = []
         for (name, entry) in file_dict.items():
             log.debug(' for (name=%s, entry=%s) in in %s', name, entry, file_dict)
             for dst in self.dest_dirs:
@@ -732,8 +804,148 @@ class Backup:
         for rec in remove:
             for dst in self.dest_dirs:
                 self.lazy_remove(dst, key + '/' + rec.name)
-        for dst in md5dirs:
-            self.lazy_write_md5(dst, key, md5files)
+        self.lazy_write_md5_to_md5dirs(md5dirs, key, md5files)
+
+    def recovery_for_each_dest(self, key):
+        """ Вызывает recovery_for_each для всех целевых каталогов """
+        md5dirs = set()
+        file_dict = {}
+        recovery = []
+        lists = ([], [])
+
+        def recovery_key_search(dest, file):
+            return self.recovery_key_search(dest, key + '/' + file, file, md5dirs, file_dict, recovery, lists)
+
+        for dst in self.dest_dirs:
+            log.debug('for dst=%s in %s', dst, self.dest_dirs)
+            self.recovery_for_each(dst, key, recovery_key_search)
+
+        return md5dirs, file_dict, recovery, lists
+
+    @staticmethod
+    def recovery_for_each(dst, key, recovery_key_search):
+        """ Вызывает recovery_key_search для всех дочерних файлов/каталогов """
+        path = dst + key
+        if not os.path.isdir(path):
+            log.debug('continue')
+            return
+        listdir = os.listdir(path)
+        log.debug('for name in %s', listdir)
+        for name in listdir:
+            log.debug('for name=%s in os.listdir.path(%s)', name, path)
+            recovery_key_search(dst, name)
+
+    def recovery_key_search(self, dst, key, name, md5dirs, file_dict, recovery, lists):
+        """
+        Исследует файл/каталог dst + key:
+          * вызывает рекурсивно для дочерних каталогов recovery_dirs;
+          * файлы с контрольными суммами, *.md5;
+          * запоминает в md5dirs каталоги, для которых должны сохраниться контрольные суммы;
+          * RecoveryEntry всех хранимых файлов бэкапов запоминает в file_dict[name];
+          * накапливает в recovery RecoveryEntry файлов, которые безусловно должны остаться в бэкапе;
+          * накапливает в lists RecoveryEntry файлов, которые могут удаляться из бэкапа по условию.
+        """
+        path = dst + key
+        if os.path.isdir(path):
+            log.debug('enter into self.recovery_dirs(%s)', key)
+            self.recovery_dirs(key)
+            log.debug('leave from self.recovery_dirs(%s)', key)
+        elif os.path.isfile(path):
+            if name.endswith(".md5"):
+                if name != ".md5":
+                    md5dirs.add(dst)
+            elif name not in file_dict and not key in ('/.log', '/.lock'):
+                entry, index = self.recovery_entry(name)
+                file_dict[name] = entry
+                if index < 0:
+                    log.debug('recovery.append(%s)', name)
+                    recovery.append(entry)
+                else:
+                    log.debug('lists[%s].append(%s)', index, name)
+                    lists[index].append(entry)
+
+    def checks(self):
+        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
+        for path in self.dest_dirs:
+            with_lock_file(path + '/.lock', lambda: self.check_dir(path))
+
+    def check_dir(self, directory):
+        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
+        md5_with_time = self.read_md5_with_times(directory)
+        if self.safe_write(directory + '/.log',  # быстро перезаписывает лог-файл
+                           lambda fd: self.write_md5_with_time_dict(fd, md5_with_time),
+                           lambda: 'create %s/.log' % directory):
+            self.slow_check_dir(directory, md5_with_time)
+
+    @classmethod
+    def read_md5_with_times(cls, directory):
+        """ Возвращает контрольные суммы из лога и файлов *.md5 во всех вложенных директориях """
+        log_md5_with_time = load_md5_with_times(directory + '/.log')
+        new_md5_with_time = {}
+
+        for root, dirs, files in os.walk(directory):
+            new_md5_with_time.update(cls.read_dir_md5_with_time(directory, root, set(files), log_md5_with_time))
+
+        return new_md5_with_time
+
+    @classmethod
+    def read_dir_md5_with_time(cls, backup_dir, directory, files, log_md5_with_time):
+        """ Возвращает контрольные суммы из лога и файлов *.md5 в директории """
+        backup_dir_len = len(backup_dir) + 1
+        prefix = '' if directory == backup_dir else directory[backup_dir_len:] + '/'
+        dir_md5_with_time = {}
+
+        for key in filter(lambda f: f.startswith(prefix) and f[len(prefix):] in files, log_md5_with_time):
+            dir_md5_with_time[key] = log_md5_with_time[key]
+
+        for name in filter(lambda f: f.endswith('.md5'), files):
+            cls.update_dir_md5_with_time(dir_md5_with_time, backup_dir_len, directory, name, files)
+
+        return dir_md5_with_time
+
+    @staticmethod
+    def update_dir_md5_with_time(dir_md5_with_time, backup_dir_len, directory, md5_name, files):
+        """ Дописывает в dir_md5_with_time записи из файла *.md5 """
+        md5_sums = load_md5(directory + '/' + md5_name)[0]
+        for name, checksum in filter(lambda i: i[0] in files, md5_sums.items()):
+            path = directory + '/' + name
+            sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+            key = path[backup_dir_len:]
+            if key not in dir_md5_with_time or sum_time > dir_md5_with_time[key][1]:
+                dir_md5_with_time[key] = (checksum, sum_time)
+
+    @classmethod
+    def slow_check_dir(cls, path, md5_with_time):
+        """ Медленно пересчитывает контрольные суммы, чтоб не создавать нагрузку на систему """
+        for key in cls.sorted_md5_with_time_by_time(md5_with_time):
+            md5_sum = md5_with_time[key][0]
+            sum_time = datetime.now(timezone.utc)
+            s = md5sum(path + '/' + key, multiplier=cls.with_sleep_multiplier)
+            if s != md5_sum:
+                s = 'corrupted'
+            with_open(path + '/.log', 'ab', lambda fd: cls.write_md5_with_time(fd, key, s, sum_time))
+
+    @classmethod
+    def write_md5_with_time_dict(cls, fd, md5_with_time):
+        """ Перезаписывает лог-файл с контрольными суммами md5 """
+        for k in cls.sorted_md5_with_time_by_time(md5_with_time):
+            md5_sum, sum_time = md5_with_time[k]
+            cls.write_md5_with_time(fd, k, md5_sum, sum_time)
+
+    @staticmethod
+    def write_md5_with_time(fd, key, checksum, sum_time):
+        """ Записывает в лог-файл одну запись"""
+        fd.write(bytes('%s %s %s\n' % (checksum, sum_time.isoformat(), key), 'UTF-8'))
+
+    @staticmethod
+    def with_sleep_multiplier():
+        """ Спит 10 ms каждые 4 кБайт. 1 ГБайт обработает не менее чем за 43 минуты """
+        time.sleep(0.01)
+        return 4
+
+    @staticmethod
+    def sorted_md5_with_time_by_time(md5_with_time):
+        return sorted(md5_with_time, key=lambda k: md5_with_time[k][1])
 
     def recovery_entry(self, name):
         """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """
@@ -756,6 +968,11 @@ class Backup:
         path = dst + key
         log.debug("lazy rm %s", path)
         self.commands[dst].append(lambda: self.remove(path))
+
+    def lazy_write_md5_to_md5dirs(self, md5dirs, key, md5files):
+        """ Выполняет отложенную запись контрольной суммы в каталоги """
+        for dst in md5dirs:
+            self.lazy_write_md5(dst, key, md5files)
 
     def lazy_write_md5(self, dst, key, md5files):
         """ Выполняет отложенную запись контрольной суммы """
@@ -833,14 +1050,13 @@ class Backup:
             stored, file_time = self.stored_checksum(path)
             if file_time is None or not real_only and self.checked < file_time:
                 return stored, False
-            # noinspection PyTypeChecker
-            real = md5sum(path, stop_watch=None)
+            real = md5sum(path, is_stop_watch=False)
             if stored != real:
                 stored = None
             self.checksum_by_path[path] = (stored, None)
             return stored, True
         except Exception as e:
-            self.error("new_checksum_by_path check error: %s", e)
+            self.error("new checksum_by_path check error: %s", e)
             self.checksum_by_path[path] = (None, None)
             return None, False
 
@@ -881,29 +1097,32 @@ class Backup:
         self.help()
 
 
-def main_backup():
-    """ Выполняет резервное копирование """
-    global log
-    sw = StopWatch("backup")
+def with_lock_file(path, handler):
+    def lock(fd):
+        if lock_file(fd):
+            remove = atexit.register(lambda: remove_file(path))
+            handler()
+            return remove
+        return None
+
     try:
-        with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as cfg:
-            config = json.load(cfg)
+        rm = with_open(path, 'xb', lock)
+    except FileExistsError:
+        rm = with_open(path, 'r+b', lock)
+    if rm is not None:
+        remove_file(path)
+        atexit.unregister(rm)
+
+
+def lock_file(fd):
+    # noinspection PyCompatibility
+    import fcntl
+    try:
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
     except IOError:
-        config = {}
-    log = logging.getLogger("backup")
-    if config.get('log_level') == 'DEBUG':
-        level = logging.DEBUG
-    else:
-        level = logging.INFO
-    log_format = config.get('log_format')
-    if log_format is None:
-        # log_format = "%(levelname)5s %(lineno)3d %(message)s"
-        log_format = "%(message)s"
-    logging.basicConfig(level=level, stream=sys.stdout, format=log_format)
-    sys.setrecursionlimit(100)
-    Backup(config)
-    sw.stop()
+        return False
 
 
 if __name__ == '__main__':
-    main_backup()
+    Backup().main()
