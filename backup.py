@@ -17,8 +17,6 @@ import subprocess
 import sys
 import time
 import traceback
-from datetime import datetime
-from datetime import timezone
 from email.mime.text import MIMEText
 
 
@@ -127,7 +125,7 @@ def load_md5_with_times(path):
             m = pattern.match(line)
             if m is not None:
                 try:
-                    t = datetime.fromisoformat(m.group(2))
+                    t = time_from_string(m.group(2))
                     result[m.group(3)] = (m.group(1).lower(), t)
                 except ValueError:
                     pass
@@ -909,7 +907,7 @@ class Backup:
         md5_sums = load_md5(directory + '/' + md5_name)[0]
         for name, checksum in filter(lambda i: i[0] in files, md5_sums.items()):
             path = directory + '/' + name
-            sum_time = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+            sum_time = os.path.getmtime(path)
             key = path[backup_dir_len:]
             if key not in dir_md5_with_time or sum_time > dir_md5_with_time[key][1]:
                 dir_md5_with_time[key] = (checksum, sum_time)
@@ -919,7 +917,7 @@ class Backup:
         """ Медленно пересчитывает контрольные суммы, чтоб не создавать нагрузку на систему """
         for key in cls.sorted_md5_with_time_by_time(md5_with_time):
             md5_sum = md5_with_time[key][0]
-            sum_time = datetime.now(timezone.utc)
+            sum_time = time.time()
             s = md5sum(path + '/' + key, multiplier=cls.with_sleep_multiplier)
             if s != md5_sum:
                 s = 'corrupted'
@@ -935,7 +933,7 @@ class Backup:
     @staticmethod
     def write_md5_with_time(fd, key, checksum, sum_time):
         """ Записывает в лог-файл одну запись"""
-        fd.write(bytes('%s %s %s\n' % (checksum, sum_time.isoformat(), key), 'UTF-8'))
+        fd.write(bytes('%s %s %s\n' % (checksum, time_to_string(sum_time), key), 'UTF-8'))
 
     @staticmethod
     def with_sleep_multiplier():
@@ -1122,6 +1120,18 @@ def lock_file(fd):
         return True
     except IOError:
         return False
+
+
+def time_to_string(sec):
+    s = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(sec))
+    micros = int((sec - int(sec)) * 1000000)
+    return '%s.%06d%s:%s' % (s[0:-5], micros, s[-5:-2], s[-2:])
+
+
+def time_from_string(iso):
+    s = '%s%s%s' % (iso[0:-13], iso[-6:-3], iso[-2:])
+    micros = int(iso[-12:-6]) / 1000000.0
+    return time.mktime(time.strptime(s, '%Y-%m-%dT%H:%M:%S%z')) + micros
 
 
 if __name__ == '__main__':

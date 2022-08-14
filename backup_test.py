@@ -3,9 +3,6 @@ import logging
 import math
 import os.path
 import time
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
 from unittest import TestCase
 from unittest import mock
 from unittest.mock import MagicMock
@@ -147,7 +144,7 @@ class BackupUnitTest(TestCase):
                 def uid_spaces():
                     return ' ' * (1 + uid(3)) + '\t' * (uid(3))
 
-                expected = {'name-%s' % uid(): ('sum-%s' % uid(), uid_datetime()) for _ in uid_range()}
+                expected = {'name-%s' % uid(): ('sum-%s' % uid(), uid_time()) for _ in uid_range()}
                 data = [expected[key][0] + uid_spaces() + expected[key][1].isoformat() + uid_spaces() + key
                         for key in expected]
                 data.insert(1, 'sum-%s no matched value name-%s' % (uid(), uid()))
@@ -581,16 +578,16 @@ class BackupTest(TestCase):
         def key(f):
             return path(f)[len(backup_dir) + 1:]
 
-        dir_md5_with_time = {key(f): (uid(), uid_datetime()) for f in logged + less + equal + greater}
+        dir_md5_with_time = {key(f): (uid(), uid_time()) for f in logged + less + equal + greater}
 
         def log_date_time(f):
             return dir_md5_with_time[key(f)][1]
 
-        getmtime = {path(f): log_date_time(f) - timedelta(seconds=uid()) for f in less}
+        getmtime = {path(f): log_date_time(f) - uid() for f in less}
         getmtime.update({path(f): log_date_time(f) for f in equal})
-        getmtime.update({path(f): log_date_time(f) + timedelta(seconds=uid()) for f in greater})
-        getmtime.update({path(f): uid_datetime() for f in lost})
-        mock_path.getmtime.side_effect = lambda f: getmtime[f].timestamp()
+        getmtime.update({path(f): log_date_time(f) + uid() for f in greater})
+        getmtime.update({path(f): uid_time() for f in lost})
+        mock_path.getmtime.side_effect = lambda f: getmtime[f]
 
         name = 'file-%s' % uid()
         mock_load_md5.return_value = (md5_sums, uid())
@@ -612,7 +609,7 @@ class BackupTest(TestCase):
     @patch.object(Backup, 'write_md5_with_time', spec=Backup.write_md5_with_time)
     @patch.object(backup, 'with_open', spec=backup.with_open)
     @patch.object(backup, 'md5sum', spec=backup.md5sum)
-    @patch('backup.datetime', autospec=True)
+    @patch('backup.time', autospec=True)
     def test_slow_check_dir(self, mock_datetime, mock_md5sum, mock_with_open,
                             mock_write_md5_with_time, mock_sorted_md5_with_time_by_time):
         subj = Backup()
@@ -620,8 +617,8 @@ class BackupTest(TestCase):
         keys = ['key-%s' % uid() for _ in uid_range()]
         mock_sorted_md5_with_time_by_time.return_value = keys
         md5_with_time = {k: (uid(), uid()) for k in keys}
-        times = [uid_datetime() for _ in keys]
-        mock_datetime.now.side_effect = times
+        times = [uid_time() for _ in keys]
+        mock_datetime.time.side_effect = times
         corrupted_index = uid(len(keys))
         mock_md5sum.side_effect = [uid() if i == corrupted_index else md5_with_time[keys[i]][0]
                                    for i in range(0, len(keys))]
@@ -648,7 +645,6 @@ class BackupTest(TestCase):
         subj.slow_check_dir(path, md5_with_time)
 
         mock_sorted_md5_with_time_by_time.assert_called_once_with(md5_with_time)
-        mock_datetime.now.assert_has_calls([call(timezone.utc) for _ in keys])
         mock_md5sum.assert_has_calls([call(path + '/' + k, multiplier=subj.with_sleep_multiplier) for k in keys])
         mock_with_open.assert_has_calls([call(path + '/.log', 'ab', mock.ANY) for _ in keys])
 
@@ -666,17 +662,19 @@ class BackupTest(TestCase):
         mock_sorted_md5_with_time_by_time.assert_called_once_with(md5_with_time)
         mock_write_md5_with_time.assert_has_calls([call(fd, k, md5_with_time[k][0], md5_with_time[k][1]) for k in keys])
 
-    @staticmethod
-    def test_write_md5_with_time():
+    @patch.object(backup, 'time_to_string', spec=backup.time_to_string)
+    def test_write_md5_with_time(self, mock_time_to_string):
         subj = Backup()
         fd = Mock(name='fd')
         key = 'key-%s' % uid()
         checksum = 'sum-%s' % uid()
-        sum_time = uid_datetime()
+        sum_time = uid_time()
+        str_time = 'time-%s' % uid()
+        mock_time_to_string.return_value = str_time
 
         subj.write_md5_with_time(fd, key, checksum, sum_time)
 
-        fd.write.assert_called_once_with(bytes(checksum + ' ' + sum_time.isoformat() + ' ' + key + '\n', 'UTF-8'))
+        fd.write.assert_called_once_with(bytes(checksum + ' ' + str_time + ' ' + key + '\n', 'UTF-8'))
 
     @patch("backup.time", autospec=True)
     def test_with_sleep_multiplier(self, mock_time):
@@ -690,7 +688,7 @@ class BackupTest(TestCase):
         key2 = 'key2-%s' % uid()
         key3 = 'key3-%s' % uid()
         keys = [key3, key1, key2]
-        md5_with_time = {k: (uid(), uid_datetime()) for k in keys}
+        md5_with_time = {k: (uid(), uid_time()) for k in keys}
         keys.reverse()
 
         self.assertEqual(subj.sorted_md5_with_time_by_time(md5_with_time), keys)
@@ -723,6 +721,14 @@ class BackupTest(TestCase):
 
         self.fail("TODO")
 
+    def test_time_to_string(self):
+        t = 1660464293.984743
+        self.assertEqual(backup.time_to_string(t), '2022-08-14T11:04:53.984743+03:00')
+
+    def test_time_from_string(self):
+        t = '2022-08-14T11:04:53.984743+03:00'
+        self.assertEqual(backup.time_from_string(t), 1660464293.984743)
+
 
 def uid_sequence():
     value = 0
@@ -740,10 +746,6 @@ def uid(n=None):
 
 def uid_time():
     return time.time() - uid() * 3600 * 24  # каждый вызов возвращает время на день раньше
-
-
-def uid_datetime():
-    return datetime.now(tz=timezone.utc) - timedelta(hours=uid())
 
 
 def uid_range():
