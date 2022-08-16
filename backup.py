@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 from email.mime.text import MIMEText
+from typing import Tuple, Dict, Optional, Type, List, Any
 
 
 def through_dirs(path, dir_filter, file_functor=None):
@@ -58,6 +59,7 @@ def stop_watch(msg, func):
 
 def md5sum(path, input_stream=None, out=None, is_stop_watch=True, multiplier=None):
     """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
+
     def md5_by_path():
         return with_open(path, 'rb', lambda f: md5sum(path, f, out=out, multiplier=multiplier))
 
@@ -90,14 +92,14 @@ class GzipMd5sum:
 
 def write_md5(file, checksum, name):
     """  Пишет в открытый файл контрольную сумму
-    file   - открытый файл
+    file - открытый файл
     md5sum - сумма, в 16-ричном виде
-    name   - имя файла
+    name - имя файла
     """
     file.write(bytes("%s\t*%s\n" % (checksum, name), 'UTF-8'))
 
 
-def load_md5(path):
+def load_md5(path: str) -> Tuple[Dict[str, str], float]:
     """ Возвращает множество контрольных сумм из файла и время модификации (dict, time) """
     pattern = re.compile(r"^(\S+)\s+\*(.+)$")
     lines = dict()
@@ -113,7 +115,7 @@ def load_md5(path):
     return lines, file_time
 
 
-def load_md5_with_times(path):
+def load_md5_with_times(path: str) -> Dict[str, Tuple[str, float]]:
     """ Возвращает dict множество контрольных сумм md5 из файла и время подсчёта md5 каждого файла """
     if not os.path.isfile(path):
         return {}
@@ -235,7 +237,7 @@ class TimeSeparator:
         """ Инициализирует Entry """
         entry.date = matcher.group(1)
 
-    def separate(self, entry_list):
+    def separate(self, entry_list: List[Any]):
         """ Сортирует список по времени в обратном порядке, оставляет первые self.num элементов """
         entry_list.sort(key=functools.cmp_to_key(self.cmp))
         return entry_list[:self.num], entry_list[self.num:]
@@ -332,7 +334,7 @@ class SvnBackup:
         return True
 
     def svn_revision(self, src):
-        """  Возврщает ревизию репозитория """
+        """  Возвращает ревизию репозитория """
         return system(("svn", "info", "file://" + os.path.abspath(src)), self.read_revision)
 
     def dump(self, src, dst, prefix, old_rev, new_rev, md5):
@@ -752,7 +754,7 @@ class Backup:
         return False
 
     def recovery_dirs(self, key):
-        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий
+        """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий.
         Удаляет устаревшие копии """
         if key in self.dir_set:
             return
@@ -838,10 +840,10 @@ class Backup:
         Исследует файл/каталог dst + key:
           * вызывает рекурсивно для дочерних каталогов recovery_dirs;
           * файлы с контрольными суммами, *.md5;
-          * запоминает в md5dirs каталоги, для которых должны сохраниться контрольные суммы;
-          * RecoveryEntry всех хранимых файлов бэкапов запоминает в file_dict[name];
-          * накапливает в recovery RecoveryEntry файлов, которые безусловно должны остаться в бэкапе;
-          * накапливает в lists RecoveryEntry файлов, которые могут удаляться из бэкапа по условию.
+          * запоминает в md5dirs каталоги, для которых должны сохраниться контрольные суммы.
+          * RecoveryEntry всех хранимых файлов бэкапов запоминает в file_dict[name].
+          * Накапливает в recovery RecoveryEntry файлов, которые безусловно должны остаться в бэкапе.
+          * Накапливает в lists RecoveryEntry файлов, которые могут удаляться из бэкапа по условию.
         """
         path = dst + key
         if os.path.isdir(path):
@@ -852,7 +854,7 @@ class Backup:
             if name.endswith(".md5"):
                 if name != ".md5":
                     md5dirs.add(dst)
-            elif name not in file_dict and not key in ('/.log', '/.lock'):
+            elif name not in file_dict and key not in ('/.log', '/.lock'):
                 entry, index = self.recovery_entry(name)
                 file_dict[name] = entry
                 if index < 0:
@@ -876,7 +878,7 @@ class Backup:
             self.slow_check_dir(directory, md5_with_time)
 
     @classmethod
-    def read_md5_with_times(cls, directory):
+    def read_md5_with_times(cls, directory: str) -> Dict[str, Tuple[str, float]]:
         """ Возвращает контрольные суммы из лога и файлов *.md5 во всех вложенных директориях """
         log_md5_with_time = load_md5_with_times(directory + '/.log')
         new_md5_with_time = {}
@@ -962,7 +964,7 @@ class Backup:
         self.commands[dst].append(lambda: self.copy(rec, dst, key))
 
     def lazy_remove(self, dst, key):
-        """ Выполняет отолженное удаление файла """
+        """ Выполняет отложенное удаление файла """
         path = dst + key
         log.debug("lazy rm %s", path)
         self.commands[dst].append(lambda: self.remove(path))
@@ -1007,7 +1009,7 @@ class Backup:
             self.safe_remove(tmp)
 
     def safe_remove(self, path):
-        """ удаляет файл с подавление исключений """
+        """ Удаляет файл с подавлением исключений """
         try:
             self.remove(path)
         except Exception as e:
@@ -1042,7 +1044,7 @@ class Backup:
                 out.write(buf)
 
     def checksum(self, path, real_only=True):
-        """ Проверяет контрольую сумму файла. Возвращает её, или None, если сумма не верна
+        """ Проверяет контрольную сумму файла. Возвращает её, или None, если сумма не верна
             и флаг, что сумма была вычислена, а не взята из файла """
         try:
             stored, file_time = self.stored_checksum(path)
@@ -1058,7 +1060,7 @@ class Backup:
             self.checksum_by_path[path] = (None, None)
             return None, False
 
-    def stored_checksum(self, path):
+    def stored_checksum(self, path) -> Tuple[Optional[str], Optional[float]]:
         """ Возвращает контрольную сумму из файла и время расчёта контрольной суммы """
         result = self.checksum_by_path.get(path)
         if result is not None:
@@ -1073,8 +1075,8 @@ class Backup:
         self.checksum_by_path[path] = result = (stored, file_time)
         return result
 
-    def checksum_files(self, directory):
-        """ Возвращает контрольные суммы директории из файла .md5 """
+    def checksum_files(self, directory) -> Tuple[Dict[str, str], float]:
+        """ Возвращает контрольные суммы директории из файла *.md5 """
         result = self.files_checksum_by_dir.get(directory)
         if result is None:
             self.files_checksum_by_dir[directory] = result = load_md5(directory + ".md5")
@@ -1122,13 +1124,13 @@ def lock_file(fd):
         return False
 
 
-def time_to_string(sec):
+def time_to_string(sec: float) -> str:
     s = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(sec))
     micros = int((sec - int(sec)) * 1000000)
     return '%s.%06d%s:%s' % (s[0:-5], micros, s[-5:-2], s[-2:])
 
 
-def time_from_string(iso):
+def time_from_string(iso: str) -> float:
     s = '%s%s%s' % (iso[0:-13], iso[-6:-3], iso[-2:])
     micros = int(iso[-12:-6]) / 1000000.0
     return time.mktime(time.strptime(s, '%Y-%m-%dT%H:%M:%S%z')) + micros
