@@ -1090,7 +1090,7 @@ class Backup:
                     break
                 out.write(buf)
 
-    def checksum(self, path: str, real_only: bool = True) -> Tuple[Optional[bool], bool]:
+    def checksum(self, path: str, real_only: bool = True) -> Tuple[Optional[str], bool]:
         """ Проверяет контрольную сумму файла. Возвращает её, или None, если сумма не верна
             и флаг, что сумма была вычислена, а не взята из файла """
         try:
@@ -1110,7 +1110,7 @@ class Backup:
             self.checksum_by_path[path] = (None, None)
             return None, False
 
-    def stored_checksum(self, path) -> Tuple[Optional[str], Optional[float]]:
+    def stored_checksum(self, path) -> Tuple[str, float]:
         """ Возвращает контрольную сумму из файла и время расчёта контрольной суммы """
         # TODO передавать dst, чтоб найти нужный log-файл?
         result = self.checksum_by_path.get(path)
