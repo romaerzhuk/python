@@ -18,7 +18,7 @@ import sys
 import time
 import traceback
 from email.mime.text import MIMEText
-from typing import Tuple, Dict, Optional, Type, List, Any
+from typing import Tuple, Dict, Optional, List, Set, AnyStr, Match, Callable, BinaryIO, Pattern
 
 
 def through_dirs(path, dir_filter, file_functor=None):
@@ -58,7 +58,7 @@ def stop_watch(msg, func):
 
 
 def md5sum(path, input_stream=None, out=None, is_stop_watch=True, multiplier=None):
-    """ Вычисляет контрольную сумму файла в шестнадцатиричном виде """
+    """ Вычисляет контрольную сумму файла в шестнадцатеричном виде """
 
     def md5_by_path():
         return with_open(path, 'rb', lambda f: md5sum(path, f, out=out, multiplier=multiplier))
@@ -215,58 +215,79 @@ def system_hidden(command, reader=None, stdin=None, cwd=None):
 class RecoveryEntry:
     """ Файл, подготовленный к восстановлению """
 
-    def __init__(self, name):
-        self.name = name  # имя файла
-        self.md5 = dict()  # контрольная сумма файла в соответствущей директории
-        self.dir = None  # имя директории с корректным файлом
-        self.list = []  # список директорий, куда нужно восстанавливать файл
+    def __init__(self, name: str) -> None:
+        self.name: str = name  # путь файла без префикса резервной директории
+        self.md5: Dict[str, str] = dict()  # контрольная сумма файла в соответствущей директории
+        self.dir: Optional[str] = None  # имя директории с корректным файлом
+        self.list: List[str] = []  # список директорий, куда нужно восстанавливать файл
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Entry(name=%s, dir=%s, list=%s)" % (self.name, self.dir, self.list)
 
 
-class TimeSeparator:
+class Separator:
+    """ Отделяет нужные резервные копии от избыточных """
+
+    def __init__(self, pattern: str):
+        self.pattern: Pattern[AnyStr] = re.compile(pattern)
+
+    @staticmethod
+    def init(entry: RecoveryEntry, matcher: Optional[Match[AnyStr]]):
+        """ Инициализирует Entry """
+        pass
+
+    def separate(self, entry_list: List[RecoveryEntry]) -> Tuple[List[RecoveryEntry], List[RecoveryEntry]]:
+        """ Отделяет нужные резервные копии от избыточных """
+        pass
+
+
+class TimeSeparator(Separator):
     """ Отделяет нужные копии от избыточных по дате создания """
 
     def __init__(self, num):
+        super().__init__(r"^.+(\d\d\d\d-\d\d-\d\d)\..+$")
         self.num = num
-        self.pattern = re.compile(r"^.+(\d\d\d\d-\d\d-\d\d)\..+$")
+
+    def match(self, name: str) -> Optional[Match[AnyStr]]:
+        return self.pattern.match(name)
 
     @staticmethod
-    def init(entry, matcher):
+    def init(entry: RecoveryEntry, matcher: Optional[Match[AnyStr]]):
         """ Инициализирует Entry """
         entry.date = matcher.group(1)
 
-    def separate(self, entry_list: List[Any]):
+    def separate(self, entry_list: List[RecoveryEntry]):
         """ Сортирует список по времени в обратном порядке, оставляет первые self.num элементов """
         entry_list.sort(key=functools.cmp_to_key(self.cmp))
         return entry_list[:self.num], entry_list[self.num:]
 
     @staticmethod
-    def cmp(e1, e2):
+    def cmp(e1: RecoveryEntry, e2: RecoveryEntry) -> int:
         """ Сравнивает файлы по дате: e1.date <= e2.date """
         if e1.dir is not None:
             if e2.dir is None:
                 return - 1
         elif e2.dir is not None:
             return 1
+        # noinspection PyUnresolvedReferences
         return ((e1.date <= e2.date) << 1) - 1
 
 
-class SvnSeparator:
+class SvnSeparator(Separator):
     """ Отделяет ненужные копии с перекрывающимися диапазонами ревизий svn """
 
     def __init__(self):
-        self.pattern = re.compile(r"^(.+)\.(\d+)-(\d+)\.svndmp\.gz$")
+        super().__init__(r"^(.+)\.(\d+)-(\d+)\.svndmp\.gz$")
 
     @staticmethod
-    def init(entry, matcher):
+    def init(entry: RecoveryEntry, matcher: Optional[Match[AnyStr]]):
         """ Инициализирует Entry """
         entry.recovery = True
         entry.start = int(matcher.group(2))
         entry.stop = int(matcher.group(3))
 
-    def separate(self, entry_list):
+    # noinspection PyUnresolvedReferences
+    def separate(self, entry_list: List[RecoveryEntry]):
         """ Разделяет перекрывающиеся диапазоны ревизий """
         entry_list.sort(key=functools.cmp_to_key(self.cmp))
         recovery, remove = [], []
@@ -284,8 +305,9 @@ class SvnSeparator:
                             break
         return recovery, remove
 
+    # noinspection PyUnresolvedReferences
     @staticmethod
-    def cmp(e1, e2):
+    def cmp(e1: RecoveryEntry, e2: RecoveryEntry) -> int:
         """ Сортирует по ревизиям """
         cmp = e1.start - e2.start
         if cmp != 0:
@@ -293,7 +315,20 @@ class SvnSeparator:
         return e2.stop - e1.stop
 
 
-class SvnBackup:
+class BackupStrategy:
+    """ Стратегия снятия резервной копии """
+
+    @staticmethod
+    def found(directory: str) -> bool:
+        """ Проверяет, что директория - подходит для снятия резервной стратегией """
+        pass
+
+    def backup(self, src: str, dst: str, prefix: str) -> bool:
+        """ Снимает резервную копию для одиночного репозитория. Возвращает True, если была снята копия """
+        pass
+
+
+class SvnBackup(BackupStrategy):
     """ Запускает svnadmin dump для репозиториев Subversion
     Сохраняет в self.md5sums подсчитанные контрольные суммы """
 
@@ -363,7 +398,7 @@ class SvnBackup:
         raise IOError("Invalid subversion info")
 
 
-class GitBackup:
+class GitBackup(BackupStrategy):
     """ Создаёт резервную копию репозитория Git """
 
     def __init__(self, backup):
@@ -500,23 +535,23 @@ class Backup:
         self.from_address = None
         self.to_address = None
         # набор способов разделить нужные копии от избыточных
-        self.time_separator = None
-        self.separators = ()
-        self.src_dirs = []
-        self.dest_dirs = []
+        self.time_separator: Optional[TimeSeparator] = None
+        self.separators: List[Separator] = []
+        self.src_dirs: List[str] = []
+        self.dest_dirs: List[str] = []
         self.dir_set = set()
-        self.new_checksum_by_path = dict()
-        self.checksum_by_path = dict()
-        self.files_checksum_by_dir = dict()
+        self.new_checksum_by_path: Dict[str, str] = dict()
+        self.checksum_by_path: Dict[str, Tuple[Optional[str], Optional[float]]] = dict()
+        self.files_checksum_by_dir: Dict[str, Tuple[Dict[str, str], float]] = dict()
         self.checksum_file = dict()
-        self.checked = time.time() - 2 * 24 * 3600
-        self.strategies = (SvnBackup(self), GitBackup(self))
+        self.checked: float = time.time() - 2 * 24 * 3600
+        self.strategies: Tuple[BackupStrategy, BackupStrategy] = (SvnBackup(self), GitBackup(self))
         self.commands = dict()  # команды на копирование/удаление файлов разделённые на директории
         self.errors = []
         self.strategy_dir = []
         self.last_modified_time = -1
 
-    def configure(self):
+    def configure(self) -> Callable:
         """ Конфигурирует выполнение """
         self.config = self.read_config()
         level = log.getLevelName(self.config.get('log_level'))
@@ -531,7 +566,7 @@ class Backup:
         return self.command()
 
     @staticmethod
-    def read_config():
+    def read_config() -> Dict[str, str]:
         """ Читает конфигурацию """
         try:
             with open(os.path.expanduser('~/.config/backup/backup.cfg'), encoding='UTF-8') as cfg:
@@ -539,7 +574,7 @@ class Backup:
         except IOError:
             return {}
 
-    def command(self):
+    def command(self) -> Callable:
         """ Вычисляет выполняемый метод """
         command = self.arg()
         src_dirs, dest_dirs, num = '', None, None
@@ -570,7 +605,7 @@ class Backup:
         self.smtp_host = self.config.get('smtp_host')
         # набор способов разделить нужные копии от избыточных
         self.time_separator = TimeSeparator(num)
-        self.separators = (self.time_separator, SvnSeparator())
+        self.separators = [self.time_separator, SvnSeparator()]
         self.src_dirs = src_dirs.split(',')
         log.debug("src_dirs=%s", self.src_dirs)
         self.dest_dirs = dest_dirs.split(',') if dest_dirs is not None else []
@@ -580,11 +615,11 @@ class Backup:
         log.debug("self.commands=%s", self.commands)
         return method
 
-    def main(self):
+    def main(self) -> None:
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
         stop_watch("backup", self.invoke)
 
-    def invoke(self):
+    def invoke(self) -> None:
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий """
         # noinspection PyBroadException
         try:
@@ -593,7 +628,7 @@ class Backup:
             self.error("%s", traceback.format_exc())
         self.send_errors()
 
-    def send_errors(self):
+    def send_errors(self) -> None:
         """ Отправляет ошибки на почту """
         if len(self.errors) == 0:
             return
@@ -611,16 +646,16 @@ class Backup:
         finally:
             server.quit()
 
-    def full(self):
+    def full(self) -> None:
         """ Архивирует исходные файлы и клонирует копии в несколько источников """
         self.dump()
         self.clone()
 
-    def dump(self):
+    def dump(self) -> None:
         """ Архивирует исходные файлы """
         for src in self.src_dirs:
             self.backup(src)
-        dirs = dict()
+        dirs: Dict[str, List[str]] = dict()  # дочерние файлы по имени *.md5-файлов
         for path in self.new_checksum_by_path.keys():
             md5path = os.path.dirname(path) + '/.md5'
             lst = dirs.get(md5path)
@@ -632,25 +667,26 @@ class Backup:
             for path in lst:
                 name = os.path.basename(path)
                 md5[name] = self.new_checksum_by_path[path]
+            # TODO safe write
             with open(md5path, 'wb') as fd:
                 names = list(md5.keys())
                 names.sort()
                 for name in names:
                     write_md5(fd, md5[name], name)
 
-    def clone(self):
+    def clone(self) -> None:
         """ Клонирует копии в несколько источников """
         self.recovery_dirs("")
         for dst in self.dest_dirs:
             for command in self.commands[dst]:
                 command()
 
-    def git(self):
+    def git(self) -> None:
         """ Выполняет fetch Git-репозиториев, и push, если настроен mirror push """
         for src in self.src_dirs:
             self.backup(src)
 
-    def backup(self, src):
+    def backup(self, src: str) -> None:
         """ Создаёт резервные копии директории """
         log.debug('backup(self, src=[%s]); self.destDirs=[%s]', src, self.dest_dirs)
         if '' == src:
@@ -685,7 +721,7 @@ class Backup:
                 return True
         return False
 
-    def safe_backup(self, strategy, src, dst, prefix):
+    def safe_backup(self, strategy: Optional[BackupStrategy], src: str, dst: str, prefix: str) -> None:
         """ Создаёт одиночную резервную копию. Перехватывает ошибки. """
         try:
             if strategy is None:
@@ -698,7 +734,7 @@ class Backup:
         except Exception as e:
             self.error("backup error:%s\n%s", e, traceback.format_exc())
 
-    def generic_backup(self, src, dst, prefix):
+    def generic_backup(self, src: str, dst: str, prefix: str) -> None:
         """ Полностью архивирует директорию, если не существует актуальной резервной копии """
         log.debug("generic backup(%s, %s, %s)", src, dst, prefix)
         if dst is None:
@@ -753,7 +789,7 @@ class Backup:
                 return True
         return False
 
-    def recovery_dirs(self, key):
+    def recovery_dirs(self, key: str) -> None:
         """ Восстанавливает повреждённые или отсутствующие файлы из зеркальных копий.
         Удаляет устаревшие копии """
         if key in self.dir_set:
@@ -806,15 +842,18 @@ class Backup:
                 self.lazy_remove(dst, key + '/' + rec.name)
         self.lazy_write_md5_to_md5dirs(md5dirs, key, md5files)
 
-    def recovery_for_each_dest(self, key):
+    def recovery_for_each_dest(self, key: str) -> Tuple[Set[str],
+                                                        Dict[str, RecoveryEntry],
+                                                        List[RecoveryEntry],
+                                                        Tuple[List[RecoveryEntry], List[RecoveryEntry]]]:
         """ Вызывает recovery_for_each для всех целевых каталогов """
-        md5dirs = set()
-        file_dict = {}
-        recovery = []
-        lists = ([], [])
+        md5dirs: Set[str] = set()
+        file_dict: Dict[str, RecoveryEntry] = {}
+        recovery: List[RecoveryEntry] = []
+        lists: Tuple[List[RecoveryEntry], List[RecoveryEntry]] = ([], [])
 
-        def recovery_key_search(dest, file):
-            return self.recovery_key_search(dest, key + '/' + file, file, md5dirs, file_dict, recovery, lists)
+        def recovery_key_search(dest: str, file: str) -> None:
+            self.recovery_key_search(dest, key + '/' + file, file, md5dirs, file_dict, recovery, lists)
 
         for dst in self.dest_dirs:
             log.debug('for dst=%s in %s', dst, self.dest_dirs)
@@ -823,7 +862,7 @@ class Backup:
         return md5dirs, file_dict, recovery, lists
 
     @staticmethod
-    def recovery_for_each(dst, key, recovery_key_search):
+    def recovery_for_each(dst: str, key: str, recovery_key_search: Callable[[str, str], None]) -> None:
         """ Вызывает recovery_key_search для всех дочерних файлов/каталогов """
         path = dst + key
         if not os.path.isdir(path):
@@ -835,7 +874,14 @@ class Backup:
             log.debug('for name=%s in os.listdir.path(%s)', name, path)
             recovery_key_search(dst, name)
 
-    def recovery_key_search(self, dst, key, name, md5dirs, file_dict, recovery, lists):
+    def recovery_key_search(self,
+                            dst: str,
+                            key: str,
+                            name: str,
+                            md5dirs: Set[str],
+                            file_dict: Dict[str, RecoveryEntry],
+                            recovery: List[RecoveryEntry],
+                            lists: Tuple[List[RecoveryEntry], List[RecoveryEntry]]) -> None:
         """
         Исследует файл/каталог dst + key:
           * вызывает рекурсивно для дочерних каталогов recovery_dirs;
@@ -864,12 +910,12 @@ class Backup:
                     log.debug('lists[%s].append(%s)', index, name)
                     lists[index].append(entry)
 
-    def checks(self):
+    def checks(self) -> None:
         """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
         for path in self.dest_dirs:
             with_lock_file(path + '/.lock', lambda: self.check_dir(path))
 
-    def check_dir(self, directory):
+    def check_dir(self, directory: str) -> None:
         """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
         md5_with_time = self.read_md5_with_times(directory)
         if self.safe_write(directory + '/.log',  # быстро перезаписывает лог-файл
@@ -947,7 +993,7 @@ class Backup:
     def sorted_md5_with_time_by_time(md5_with_time):
         return sorted(md5_with_time, key=lambda k: md5_with_time[k][1])
 
-    def recovery_entry(self, name):
+    def recovery_entry(self, name: str) -> Tuple[RecoveryEntry, int]:
         """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """
         entry = RecoveryEntry(name)
         for i in range(len(self.separators)):
@@ -986,13 +1032,14 @@ class Backup:
         self.safe_write(path, lambda fd: self.do_write_md5(fd, dst, md5files), lambda: "md5sum -b %s/*" % dst + key)
 
     @staticmethod
-    def do_write_md5(fd, dst, md5files):
+    def do_write_md5(fd: BinaryIO, dst: str, md5files: List[RecoveryEntry]) -> None:
         """ Пишет контрольные суммы в файл """
         for rec in md5files:
             if dst in rec.md5:
                 write_md5(fd, rec.md5[dst], rec.name)
 
     def safe_write(self, file, write, name):
+        """ Безопасно пишет в файл """
         tmp = file + ".tmp"
         try:
             remove_file(tmp)
@@ -1001,10 +1048,10 @@ class Backup:
                 write(fd)
             remove_file(file)
             os.rename(tmp, file)
-            return 1
+            return True
         except Exception as e:
             self.error("%s error: %s\n%s", name(), e, traceback.format_exc())
-            return 0
+            return False
         finally:
             self.safe_remove(tmp)
 
@@ -1025,7 +1072,7 @@ class Backup:
 
     def copy(self, rec, dst_dir, key):
         """ Копирует файл """
-        # быстрее всего копировать с 1й директории, с локального диска
+        # быстрее всего копировать с 1-й директории, с локального диска
         src_dir = rec.dir if dst_dir == self.dest_dirs[0] else self.dest_dirs[0]
         src = src_dir + key
         dst = dst_dir + key
@@ -1043,11 +1090,14 @@ class Backup:
                     break
                 out.write(buf)
 
-    def checksum(self, path, real_only=True):
+    def checksum(self, path: str, real_only: bool = True) -> Tuple[Optional[bool], bool]:
         """ Проверяет контрольную сумму файла. Возвращает её, или None, если сумма не верна
             и флаг, что сумма была вычислена, а не взята из файла """
         try:
+            # TODO тут нужно возвращать прочитанные из .log-файла контрольные суммы
+            # TODO передавать dst, чтоб найти нужный log-файл? Если передаётся dst, то и real_only вычисляется по месту
             stored, file_time = self.stored_checksum(path)
+            # TODO real_only для суммы, прочитанной .log-файла из необязательна, не для *.md5-файлов, в них пишет dump
             if file_time is None or not real_only and self.checked < file_time:
                 return stored, False
             real = md5sum(path, is_stop_watch=False)
@@ -1062,12 +1112,11 @@ class Backup:
 
     def stored_checksum(self, path) -> Tuple[Optional[str], Optional[float]]:
         """ Возвращает контрольную сумму из файла и время расчёта контрольной суммы """
+        # TODO передавать dst, чтоб найти нужный log-файл?
         result = self.checksum_by_path.get(path)
         if result is not None:
             return result
-        if not os.path.isfile(path):
-            self.checksum_by_path[path] = result = (None, None)
-            return result
+        # TODO тут нужно возвращать прочитанные из .log-файла контрольные суммы
         directory = os.path.dirname(path) + '/'
         lines, file_time = self.checksum_files(directory)
         name = os.path.basename(path)
@@ -1075,7 +1124,7 @@ class Backup:
         self.checksum_by_path[path] = result = (stored, file_time)
         return result
 
-    def checksum_files(self, directory) -> Tuple[Dict[str, str], float]:
+    def checksum_files(self, directory: str) -> Tuple[Dict[str, str], float]:
         """ Возвращает контрольные суммы директории из файла *.md5 """
         result = self.files_checksum_by_dir.get(directory)
         if result is None:
@@ -1114,8 +1163,7 @@ def with_lock_file(path, handler):
         atexit.unregister(rm)
 
 
-def lock_file(fd):
-    # noinspection PyCompatibility
+def lock_file(fd: BinaryIO) -> bool:
     import fcntl
     try:
         fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
