@@ -221,7 +221,7 @@ class RecoveryEntry:
 
     def __init__(self, name: str) -> None:
         self.name: str = name  # путь файла без префикса резервной директории
-        self.md5: Dict[str, str] = dict()  # контрольная сумма файла в соответствущей директории
+        self.md5: Dict[str, str] = {}  # контрольная сумма файла в соответствущей директории
         self.dir: Optional[str] = None  # имя директории с корректным файлом
         self.list: List[str] = []  # список директорий, куда нужно восстанавливать файл
 
@@ -898,7 +898,7 @@ class Backup:
             if name.endswith(".md5"):
                 if name != ".md5":
                     md5dirs.add(dst)
-            elif name not in file_dict and key not in ('/.checksum', '/.lock'):
+            elif name not in file_dict and name != '.checksum' and key != '/.lock':
                 entry, index = self.recovery_entry(name)
                 file_dict[name] = entry
                 if index < 0:
@@ -918,7 +918,7 @@ class Backup:
     def check_dir_recursively(self, directory: str) -> None:
         """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
         for root, dirs, files in os.walk(directory):
-            self.check_dir(root, root + '/.checksum', set(files))
+            self.check_dir(root, self.checksum_by_dir(root), set(files))
 
     def check_dir(self, directory: str, checksum_path: str, files: Set[str]) -> None:
         md5_with_time = self.read_dir_md5_with_time(directory, checksum_path, files)
@@ -1117,12 +1117,16 @@ class Backup:
         if result is not None:
             return result
         for root, dirs, files in os.walk(directory):
-            result = self.read_dir_md5_with_time(directory, directory + '/.checksum', set(files))
+            result = self.read_dir_md5_with_time(directory, self.checksum_by_dir(directory), set(files))
             break
         if result is None:
             result = {}
         self.checksums_by_dir[directory] = result
         return result
+
+    @staticmethod
+    def checksum_by_dir(directory: str) -> str:
+        return directory + '/.checksum'
 
     def error(self, msg, *args):
         """ Пишет сообщение в лог. Добавляет сообщение для отправки email """
@@ -1166,15 +1170,17 @@ def lock_file(fd: BinaryIO) -> bool:
 
 
 def time_to_string(sec: float) -> str:
-    s = time.strftime('%Y-%m-%dT%X%z', time.localtime(sec))
+    t = time.localtime(sec)
     micros = int((sec - int(sec)) * 1000000)
+    s = time.strftime('%Y-%m-%dT%X%z', t)
     return '%s.%06d%s:%s' % (s[0:-5], micros, s[-5:-2], s[-2:])
 
 
 def time_from_string(iso: str) -> float:
     s = '%s%s%s' % (iso[0:-13], iso[-6:-3], iso[-2:])
     micros = int(iso[-12:-6]) / 1000000.0
-    return time.mktime(time.strptime(s, '%Y-%m-%dT%X%z')) + micros
+    t = time.strptime(s, '%Y-%m-%dT%X%z')
+    return time.mktime(t) + micros
 
 
 if __name__ == '__main__':
