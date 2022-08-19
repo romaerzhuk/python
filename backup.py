@@ -220,10 +220,10 @@ class RecoveryEntry:
     """ Файл, подготовленный к восстановлению """
 
     def __init__(self, name: str) -> None:
-        self.name: str = name  # путь файла без префикса резервной директории
-        self.md5: Dict[str, str] = {}  # контрольная сумма файла в соответствущей директории
-        self.dir: Optional[str] = None  # имя директории с корректным файлом
-        self.list: List[str] = []  # список директорий, куда нужно восстанавливать файл
+        self.name = name  # type: str # путь файла без префикса резервной директории
+        self.md5 = {}  # type: Dict[str, str] # контрольная сумма файла в соответствущей директории
+        self.dir = None  # type: Optional[str] # имя директории с корректным файлом
+        self.list = []  # type: List[str] # список директорий, куда нужно восстанавливать файл
 
     def __repr__(self) -> str:
         return "Entry(name=%s, dir=%s, list=%s)" % (self.name, self.dir, self.list)
@@ -233,7 +233,7 @@ class Separator:
     """ Отделяет нужные резервные копии от избыточных """
 
     def __init__(self, pattern: str):
-        self.pattern: Pattern[AnyStr] = re.compile(pattern)
+        self.pattern = re.compile(pattern)  # type: Pattern[AnyStr]
 
     @staticmethod
     def init(entry: RecoveryEntry, matcher: Optional[Match[AnyStr]]):
@@ -536,19 +536,19 @@ class Backup:
         self.from_address = None
         self.to_address = None
         # набор способов разделить нужные копии от избыточных
-        self.time_separator: Optional[TimeSeparator] = None
-        self.separators: List[Separator] = []
-        self.src_dirs: List[str] = []
-        self.dest_dirs: List[str] = []
-        self.dir_set: Set[str] = set()
-        self.new_checksum_by_path: Dict[str, str] = {}
-        self.checksums_by_dir: Dict[str, Dict[str, Tuple[Optional[str], Optional[float]]]] = {}
-        self.checked: float = time.time() - 30 * 24 * 3600
-        self.strategies: Tuple[BackupStrategy, BackupStrategy] = (SvnBackup(self), GitBackup(self))
-        self.commands: Dict[str, List[Callable[[], None]]] = {}  # команды на копирование/удаление файлов по директориям
-        self.errors: List[str] = []
-        self.strategy_dir: List[Tuple[BackupStrategy, str]] = []
-        self.last_modified_time: float = -1
+        self.time_separator = None  # type: Optional[TimeSeparator]
+        self.separators = []  # type: List[Separator]
+        self.src_dirs = []  # type: List[str]
+        self.dest_dirs = []  # type: List[str]
+        self.dir_set = set()  # type: Set[str]
+        self.new_checksum_by_path = {}  # type: Dict[str, str]
+        self.checksums_by_dir = {}  # type: Dict[str, Dict[str, Tuple[Optional[str], Optional[float]]]]
+        self.checked = time.time() - 30 * 24 * 3600  # type: float
+        self.strategies = (SvnBackup(self), GitBackup(self))  # type: Tuple[BackupStrategy, BackupStrategy]
+        self.commands = {}  # type: Dict[str, List[Callable[[], None]]] # команды по директориям
+        self.errors = []  # type: List[str]
+        self.strategy_dir = []  # type: List[Tuple[BackupStrategy, str]]
+        self.last_modified_time = -1  # type: float
 
     def configure(self) -> Callable:
         """ Конфигурирует выполнение """
@@ -653,7 +653,7 @@ class Backup:
         """ Архивирует исходные файлы """
         for src in self.src_dirs:
             self.backup(src)
-        dirs: Dict[str, List[str]] = dict()  # дочерние файлы по имени *.md5-файлов
+        dirs = {}  # type: Dict[str, List[str]] # дочерние файлы по имени *.md5-файлов
         for path in self.new_checksum_by_path.keys():
             md5path = os.path.dirname(path) + '/.md5'
             lst = dirs.get(md5path)
@@ -845,10 +845,10 @@ class Backup:
                                                         List[RecoveryEntry],
                                                         Tuple[List[RecoveryEntry], List[RecoveryEntry]]]:
         """ Вызывает recovery_for_each для всех целевых каталогов """
-        md5dirs: Set[str] = set()  # контрольные суммы этих каталогов будут перезаписаны
-        file_dict: Dict[str, RecoveryEntry] = {}
-        recovery: List[RecoveryEntry] = []
-        lists: Tuple[List[RecoveryEntry], List[RecoveryEntry]] = ([], [])
+        md5dirs = set()  # type: Set[str] # контрольные суммы этих каталогов будут перезаписаны
+        file_dict = {}  # type: Dict[str, RecoveryEntry]
+        recovery = []  # type: List[RecoveryEntry]
+        lists = ([], [])  # type: Tuple[List[RecoveryEntry], List[RecoveryEntry]]
 
         def recovery_key_search(dest: str, file: str) -> None:
             self.recovery_key_search(dest, key + '/' + file, file, md5dirs, file_dict, recovery, lists)
