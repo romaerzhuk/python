@@ -910,24 +910,34 @@ class Backup:
 
     def checks(self) -> None:
         """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
-        def check():
-            for path in self.dest_dirs:
-                self.check_dir_recursively(path)
-        with_lock_file(self.dest_dirs[0] + '/.lock', check)
+        with_lock_file(self.dest_dirs[0] + '/.lock', lambda: self.slow_check_dir(self.write_and_get_checksums()))
 
-    def check_dir_recursively(self, directory: str) -> None:
-        """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
+    def write_and_get_checksums(self) -> Dict[str, Dict[str, Tuple[str, float]]]:
+        """ Записывает контрольные суммы всех директорий. Возвращает контрольные суммы """
+        for path in self.dest_dirs:
+            self.write_dir_checksums_recursively(path)
+        return self.checksums_by_dir
+
+    def write_dir_checksums_recursively(self, directory: str) -> None:
+        """ Записывает контрольные суммы директорий """
         for root, dirs, files in os.walk(directory):
-            self.check_dir(root, self.checksum_by_dir(root), set(files))
+            self.write_dir_checksums(root, self.checksum_path(root), set(files))
 
-    def check_dir(self, directory: str, checksum_path: str, files: Set[str]) -> None:
+    def write_dir_checksums(self, directory: str, checksum_path: str, files: Set[str]) -> None:
+        """ Записывает контрольные суммы директории """
         md5_with_time = self.read_dir_md5_with_time(directory, checksum_path, files)
         if len(md5_with_time) == 0:
             remove_file(checksum_path)
         elif self.safe_write(checksum_path,
                              lambda fd: self.write_md5_with_time_dict(fd, md5_with_time),
                              lambda: 'update ' + checksum_path):
-            self.slow_check_dir(directory, checksum_path, md5_with_time)
+            self.checksums_by_dir[directory] = md5_with_time
+
+    @classmethod
+    def read_directory_md5_with_time(cls, directory: str) -> Dict[str, Tuple[str, float]]:
+        for root, dirs, files in os.walk(directory):
+            return cls.read_dir_md5_with_time(directory, cls.checksum_path(directory), set(files))
+        return {}
 
     @classmethod
     def read_dir_md5_with_time(cls,
@@ -955,14 +965,14 @@ class Backup:
                 dir_md5_with_time[name] = (checksum, sum_time)
 
     @classmethod
-    def slow_check_dir(cls, directory: str, checksum_path: str, md5_with_time: Dict[str, Tuple[str, float]]):
-        """ Медленно пересчитывает контрольные суммы, чтоб не создавать нагрузку на систему """
-        for key in cls.sorted_md5_with_time_by_time(md5_with_time):
+    def slow_check_dir(cls, checksums_by_dir: Dict[str, Dict[str, Tuple[str, float]]]) -> None:
+        """ Медленно вычисляет контрольные суммы, чтоб не создавать нагрузку на систему """
+        for directory, name, checksum in cls.sorted_checksums_by_dir(checksums_by_dir):
             sum_time = time.time()
-            s = md5sum(directory + '/' + key, multiplier=cls.with_sleep_multiplier)
-            if s != md5_with_time[key][0]:
+            s = md5sum(directory + '/' + name, multiplier=cls.with_sleep_multiplier)
+            if s != checksum:
                 s = 'corrupted'
-            with_open(checksum_path, 'ab', lambda fd: cls.write_md5_with_time(fd, key, s, sum_time))
+            with_open(cls.checksum_path(directory), 'ab', lambda fd: cls.write_md5_with_time(fd, name, s, sum_time))
 
     @classmethod
     def write_md5_with_time_dict(cls, fd: IO, md5_with_time: Dict[str, Tuple[str, float]]) -> None:
@@ -983,8 +993,17 @@ class Backup:
         return 4
 
     @staticmethod
-    def sorted_md5_with_time_by_time(md5_with_time):
+    def sorted_md5_with_time_by_time(md5_with_time: Dict[str, Tuple[str, float]]) -> List[str]:
         return sorted(md5_with_time, key=lambda k: md5_with_time[k][1])
+
+    @staticmethod
+    def sorted_checksums_by_dir(checksums_by_dir: Dict[str, Dict[str, Tuple[str, float]]]) \
+            -> List[Tuple[str, str, str]]:
+        result = []
+        for directory, checksum_by_name in checksums_by_dir.items():
+            for name, t in checksum_by_name.items():
+                result.append((directory, name, t[0]))
+        return sorted(result, key=lambda k: checksums_by_dir[k[0]][k[1]][1])
 
     def recovery_entry(self, name: str) -> Tuple[RecoveryEntry, int]:
         """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """
@@ -1066,12 +1085,13 @@ class Backup:
     def copy(self, rec: RecoveryEntry, dst_dir: str, key: str) -> None:
         """ Копирует файл """
         # быстрее всего копировать с 1-й директории, с локального диска
-        src_dir = rec.dir if dst_dir == self.dest_dirs[0] else self.dest_dirs[0]
+        src_dir = rec.dir if self.dest_dirs[0] in rec.list else self.dest_dirs[0]
         src = src_dir + key
         dst = dst_dir + key
-        sw = StopWatch("cp %s %s" % (src, dst))
-        if self.safe_write(dst, lambda out: self.do_copy(out, src, rec.md5[rec.dir]), lambda: "cp %s %s" % (src, dst)):
-            rec.md5[dst_dir] = rec.md5[rec.dir]
+        name = 'cp %s %s' % (src, dst)
+        sw = StopWatch(name)
+        if self.safe_write(dst, lambda out: self.do_copy(out, src, rec.md5[src_dir]), lambda: name):
+            rec.md5[dst_dir] = rec.md5[src_dir]
         sw.stop()
 
     @staticmethod
@@ -1106,7 +1126,7 @@ class Backup:
                 stored = None
             checksum_by_name[name] = (stored, None)
             return stored, True
-        except Exception as e:
+        except BaseException as e:
             self.error("new checksum check error: %s", e)
             checksum_by_name[name] = (None, None)
             return None, False
@@ -1116,16 +1136,12 @@ class Backup:
         result = self.checksums_by_dir.get(directory)
         if result is not None:
             return result
-        for root, dirs, files in os.walk(directory):
-            result = self.read_dir_md5_with_time(directory, self.checksum_by_dir(directory), set(files))
-            break
-        if result is None:
-            result = {}
+        result = self.read_directory_md5_with_time(directory)
         self.checksums_by_dir[directory] = result
         return result
 
     @staticmethod
-    def checksum_by_dir(directory: str) -> str:
+    def checksum_path(directory: str) -> str:
         return directory + '/.checksum'
 
     def error(self, msg, *args):
