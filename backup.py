@@ -129,7 +129,8 @@ def load_md5_with_times(path: str) -> Dict[str, Tuple[str, float]]:
             if m is not None:
                 try:
                     t = time_from_string(m.group(2))
-                    result[m.group(3)] = (m.group(1).lower(), t)
+                    checksum = m.group(1).lower()
+                    result[m.group(3)] = (checksum if len(checksum) == 32 else None, t)
                 except ValueError:
                     pass
         return result
@@ -972,7 +973,12 @@ class Backup:
             s = md5sum(directory + '/' + name, multiplier=cls.with_sleep_multiplier)
             if s != checksum:
                 s = 'corrupted'
-            with_open(cls.checksum_path(directory), 'ab', lambda fd: cls.write_md5_with_time(fd, name, s, sum_time))
+            cls.append_checksum(directory, name, s, sum_time)
+
+    @classmethod
+    def append_checksum(cls, directory: str, name: str, checksum: str, sum_time: float) -> None:
+        """ Дописывает в файл '.checksum' одну запись в режиме append """
+        with_open(cls.checksum_path(directory), 'ab', lambda fd: cls.write_md5_with_time(fd, name, checksum, sum_time))
 
     @classmethod
     def write_md5_with_time_dict(cls, fd: IO, md5_with_time: Dict[str, Tuple[str, float]]) -> None:
@@ -983,7 +989,7 @@ class Backup:
 
     @staticmethod
     def write_md5_with_time(fd: IO, key: str, checksum: str, sum_time: float) -> None:
-        """ Записывает в лог-файл одну запись"""
+        """ Записывает в файл '.checksum' одну запись"""
         fd.write(bytes('%s %s %s\n' % (checksum, time_to_string(sum_time), key), 'UTF-8'))
 
     @staticmethod
@@ -1114,22 +1120,36 @@ class Backup:
         directory = os.path.dirname(path)
         name = os.path.basename(path)
         checksum_by_name = self.checksum_by_name(directory)
-        stored, file_time = checksum_by_name.get(name, (None, None))
         # file_time is None в двух случаях:
         # 1) когда и stored is None, контрольной суммы нет
         # 2) контрольная сумма только что вычислена заново
-        if file_time is None or self.checked < file_time:
+        stored, sum_time = checksum_by_name.get(name, (None, None))
+        if sum_time is None or self.checked < sum_time:  # sum_time is None когда и stored is None, суммы нет
             return stored, False
-        try:
-            real = md5sum(path, is_stop_watch=False)
-            if stored != real:
-                stored = None
-            checksum_by_name[name] = (stored, None)
-            return stored, True
-        except BaseException as e:
-            self.error("new checksum check error: %s", e)
+        sum_time = time.time()
+        real = self.safe_md5sum(path)
+        if stored != real:
+            self.safe_append_checksum(directory, name, 'corrupted', sum_time)
             checksum_by_name[name] = (None, None)
             return None, False
+        self.safe_append_checksum(directory, name, stored, sum_time)
+        checksum_by_name[name] = (stored, None)
+        return stored, True
+
+    def safe_md5sum(self, path: str) -> Optional[str]:
+        """ Вычисляет контрольную сумму файла с подавлением исключения """
+        try:
+            return md5sum(path, is_stop_watch=False)
+        except BaseException as e:
+            self.error('md5sum error: %s', e)
+            return None
+
+    def safe_append_checksum(self, directory: str, name: str, checksum: str, sum_time: float) -> None:
+        """ Записывает контрольную сумму файла с подавлением исключения """
+        try:
+            self.append_checksum(directory, name, checksum, sum_time)
+        except BaseException as e:
+            self.error('append checksum error: %s', e)
 
     def checksum_by_name(self, directory: str) -> Dict[str, Tuple[Optional[str], Optional[float]]]:
         """ Возвращает контрольные суммы файлов в директории из *.checksum и файлов *.md5. Кэширует результат """

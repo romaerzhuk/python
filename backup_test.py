@@ -136,12 +136,19 @@ class BackupUnitTest(TestCase):
                 def uid_spaces():
                     return ' ' * (1 + uid(3)) + '\t' * (uid(3))
 
-                expected = {'name-%s' % uid(): ('sum-%s' % uid(), int(uid_time()))
+                expected = {'name-%s' % uid(): (('sum-%s' % uid()).rjust(32, '0'), int(uid_time()))
                             for _ in uid_range()}
                 data = [expected[key][0] + uid_spaces() + time_to_iso(expected[key][1]) + uid_spaces() + key
                         for key in expected]
-                data.insert(1, 'sum-%s no matched value name-%s' % (uid(), uid()))
-                data.insert(1, 'sum-%s 2021-99-99T99:99:99.123456+00:00 name-%s' % (uid(), uid()))  # illegal time
+                data.append('%s no matched value name-%s' % (('sum-%s' % uid()).rjust(32, '0'), uid()))
+                data.append('%s 2021-99-99T99:99:99.123456+00:00 name-%s'
+                            % (('sum-%s' % uid()).rjust(32, '0'), uid()))  # illegal time
+                for i in range(30, 35):
+                    if i != 32:
+                        sum_time = int(uid_time())
+                        key = 'name-%s' % uid()
+                        data.append(('sum-%s' % uid()).rjust(i, '0') + ' ' + time_to_iso(sum_time) + ' '+ key)
+                        expected[key] = (None, sum_time)
                 path = 'path-%s' % uid()
 
                 def with_open(name, mode, read):
@@ -639,42 +646,18 @@ class BackupTest(TestCase):
         self.assertEqual(dir_md5_with_time, expected)
 
     @patch.object(Backup, 'sorted_checksums_by_dir', autospec=True)
-    @patch.object(Backup, 'write_md5_with_time', spec=Backup.write_md5_with_time)
-    @patch.object(Backup, 'checksum_path', spec=Backup.checksum_path)
-    @patch.object(backup, 'with_open', spec=backup.with_open)
+    @patch.object(Backup, 'append_checksum', spec=Backup.append_checksum)
     @patch.object(backup, 'md5sum', spec=backup.md5sum)
     @patch('backup.time', autospec=True)
-    def test_slow_check_dir(self, mock_datetime, mock_md5sum, mock_with_open, mock_checksum_path,
-                            mock_write_md5_with_time, mock_sorted_checksums_by_dir):
+    def test_slow_check_dir(self, mock_datetime, mock_md5sum, mock_append_checksum, mock_sorted_checksums_by_dir):
         subj = Backup()
         items = [('dir-%s' % uid(), 'name-%s' % uid(), 'checksum-%s' % uid()) for _ in uid_range()]
         mock_sorted_checksums_by_dir.return_value = items
         times = [uid_time() for _ in items]
         mock_datetime.time.side_effect = times
         corrupted_index = uid(len(items))
-        mock_md5sum.side_effect = [uid() if i == corrupted_index else items[i][2]
+        mock_md5sum.side_effect = ['checksum-%s' % uid() if i == corrupted_index else items[i][2]
                                    for i in range(0, len(items))]
-        lines = ['line-%s' % uid() for _ in items]
-        mock_write_md5_with_time.side_effect = lines
-        index = 0
-        fd = ['fd-%s' % uid() for _ in items]
-
-        def md5_sum(i):
-            return 'corrupted' if i == corrupted_index else items[i][2]
-
-        def with_open(_file, _mode, handler):
-            nonlocal index
-            mock_write_md5_with_time.assert_has_calls([call(fd[i], items[i][1], md5_sum(i), times[i])
-                                                       for i in range(0, index)])
-
-            self.assertEqual(handler(fd[index]), lines[index])
-            index += 1
-            mock_write_md5_with_time.assert_has_calls([call(fd[i], items[i][1], md5_sum(i), times[i])
-                                                       for i in range(0, index)])
-
-        mock_with_open.side_effect = with_open
-        checksum_path = '/checksum_path-%s' % uid()
-        mock_checksum_path.side_effect = lambda d: d + checksum_path
         checksums_by_dir = 'checksums_by_dir-%s' % uid()
 
         subj.slow_check_dir(checksums_by_dir)
@@ -682,8 +665,35 @@ class BackupTest(TestCase):
         mock_sorted_checksums_by_dir.assert_called_once_with(checksums_by_dir)
         mock_md5sum.assert_has_calls([call(directory + '/' + name, multiplier=subj.with_sleep_multiplier)
                                       for directory, name, _ in items])
-        mock_with_open.assert_has_calls([call(d + checksum_path, 'ab', mock.ANY) for d, _, _ in items])
-        mock_checksum_path.assert_has_calls([call(d) for d, _, _ in items])
+        mock_append_checksum.assert_has_calls([call(items[i][0], items[i][1],
+                                                    'corrupted' if i == corrupted_index else items[i][2],
+                                                    times[i])
+                                               for i in range(0, len(items))])
+
+    @patch.object(Backup, 'write_md5_with_time', spec=Backup.write_md5_with_time)
+    @patch.object(Backup, 'checksum_path', spec=Backup.checksum_path)
+    @patch.object(backup, 'with_open', spec=backup.with_open)
+    def test_append_checksum(self, mock_with_open, mock_checksum_path, mock_write_md5_with_time):
+        subj = Backup()
+        name = 'name-%s' % uid()
+        checksum = 'checksum-%s' % uid()
+        sum_time = uid_time()
+
+        def with_open(_file, _mode, handler):
+            mock_write_md5_with_time.assert_not_called()
+            fd = 'fd-%s' % uid()
+            handler(fd)
+            mock_write_md5_with_time.assert_called_once_with(fd, name, checksum, sum_time)
+
+        mock_with_open.side_effect = with_open
+        checksum_path = 'checksum_path-%s' % uid()
+        mock_checksum_path.return_value = checksum_path
+        directory = 'dir-%s' % uid()
+
+        subj.append_checksum(directory, name, checksum, sum_time)
+
+        mock_with_open.assert_called_once_with(checksum_path, 'ab', mock.ANY)
+        mock_checksum_path.assert_called_once_with(directory)
 
     @patch.object(Backup, 'sorted_md5_with_time_by_time', spec=Backup.sorted_md5_with_time_by_time)
     @patch.object(Backup, 'write_md5_with_time', spec=Backup.write_md5_with_time)
@@ -847,59 +857,99 @@ class BackupTest(TestCase):
                                      (src, expected_checksum, illegal_checksum))
                 mock_out.write.assert_has_calls(expected_calls)
 
-    @patch.object(Backup, 'error', autospec=True)
-    @patch('backup.md5sum', autospec=True)
+    @patch.object(Backup, 'safe_append_checksum', autospec=True)
+    @patch.object(Backup, 'safe_md5sum', autospec=True)
     @patch.object(Backup, 'checksum_by_name', autospec=True)
     @patch('backup.os.path', autospec=True)
-    def test_checksum(self, mock_os_path, mock_checksum_by_name, mock_md5sum, mock_error):
+    def test_checksum(self, mock_os_path, mock_checksum_by_name, mock_safe_md5sum, mock_safe_append_checksum):
         for contains in (False, True):
             for offset in (None, -5, -2, -1, 0, 1, 2, 5):
-                for raised in (None, BaseException(), Exception()):
-                    for is_equals in (False, True):
-                        for m in (mock_os_path, mock_checksum_by_name, mock_md5sum, mock_error):
-                            m.reset_mock()
-                        with self.subTest(contains=contains, offset=offset, raised=raised, is_equals=is_equals):
-                            subj = Backup()
-                            subj.checked = uid_time()
-                            directory = 'dir-%s' % uid()
-                            mock_os_path.dirname.return_value = directory
-                            name = 'name-%s' % uid()
-                            mock_os_path.basename.return_value = name
-                            checksum_by_name = {'name-%s' % uid(): uid() for _ in uid_range()}
-                            checksum = 'checksum-%s' % uid()
-                            if contains:
-                                checksum_by_name[name] = (checksum, None if offset is None else subj.checked + offset)
-                            mock_checksum_by_name.return_value = checksum_by_name
+                for is_equals in (False, True):
+                    for m in (mock_os_path, mock_checksum_by_name, mock_safe_md5sum, mock_safe_append_checksum):
+                        m.reset_mock()
+                    with self.subTest(contains=contains, offset=offset, is_equals=is_equals):
+                        subj = Backup()
+                        subj.checked = uid_time()
+                        directory = 'dir-%s' % uid()
+                        mock_os_path.dirname.return_value = directory
+                        name = 'name-%s' % uid()
+                        mock_os_path.basename.return_value = name
+                        checksum_by_name = {'name-%s' % uid(): uid() for _ in uid_range()}
+                        checksum = 'checksum-%s' % uid()
+                        if contains:
+                            checksum_by_name[name] = (checksum, None if offset is None else subj.checked + offset)
+                        mock_checksum_by_name.return_value = checksum_by_name
+                        mock_safe_md5sum.return_value = checksum if is_equals else 'checksum-%s' % uid()
+                        path = 'path-%s' % uid()
+                        expected_checksum_by_name = checksum_by_name.copy()
+                        expected = (None, False)
+                        if contains:
+                            if offset is None or offset > 0:
+                                expected = (checksum, False)
+                            else:
+                                expected = (checksum if is_equals else None, is_equals)
+                                expected_checksum_by_name[name] = (checksum if is_equals else None, None)
 
-                            # noinspection PyUnusedLocal
-                            def md5sum(_path, is_stop_watch):
-                                if raised is None:
-                                    return checksum if is_equals else 'checksum-%s' % uid()
-                                raise raised
+                        actual = subj.checksum(path)
 
-                            mock_md5sum.side_effect = md5sum
-                            path = 'path-%s' % uid()
-                            expected_checksum_by_name = checksum_by_name.copy()
-                            expected = (None, False)
-                            if contains:
-                                if offset is None or offset > 0:
-                                    expected = (checksum, False)
-                                else:
-                                    success = is_equals and raised is None
-                                    expected = (checksum if success else None, raised is None)
-                                    expected_checksum_by_name[name] = (checksum if success else None, None)
+                        self.assertEqual(actual, expected)
+                        self.assertEqual(checksum_by_name, expected_checksum_by_name)
+                        mock_os_path.dirname.assert_called_once_with(path)
+                        mock_os_path.basename.assert_called_once_with(path)
+                        mock_safe_md5sum.assert_has_calls([call(subj, path)]
+                                                          if contains and offset is not None and offset < 0 else [])
 
-                            actual = subj.checksum(path)
+    @patch.object(Backup, 'error', autospec=True)
+    @patch('backup.md5sum', autospec=True)
+    def test_safe_md5sum(self, mock_md5sum, mock_error):
+        for raised in (None, BaseException(), Exception()):
+            with self.subTest(raised=raised):
+                mock_md5sum.reset_mock()
+                mock_error.reset_mock()
+                subj = Backup()
+                path = 'path-%s' % uid()
+                checksum = 'checksum-%s' % uid()
 
-                            self.assertEqual(actual, expected)
-                            self.assertEqual(checksum_by_name, expected_checksum_by_name)
-                            mock_os_path.dirname.assert_called_once_with(path)
-                            mock_os_path.basename.assert_called_once_with(path)
-                            mock_md5sum.assert_has_calls([call(path, is_stop_watch=False)]
-                                                         if contains and offset is not None and offset < 0 else [])
-                            mock_error.assert_has_calls([call(subj, "new checksum check error: %s", raised)]
-                                                        if contains and offset is not None and offset < 0
-                                                        and raised is not None else [])
+                # noinspection PyUnusedLocal
+                def md5sum(_path, is_stop_watch):
+                    if raised is None:
+                        return checksum
+                    raise raised
+
+                mock_md5sum.side_effect = md5sum
+                expected = checksum if raised is None else None
+
+                actual = subj.safe_md5sum(path)
+
+                self.assertEqual(actual, expected)
+                mock_md5sum.assert_has_calls([] if raised is None else [call(path, is_stop_watch=False)])
+                mock_error.assert_has_calls([] if raised is None
+                                            else [call(subj, 'md5sum error: %s', raised)])
+
+    @patch.object(Backup, 'error', autospec=True)
+    @patch.object(Backup, 'append_checksum', spec=Backup.append_checksum)
+    def test_safe_append_checksum(self, mock_append_checksum, mock_error):
+        for raised in (None, BaseException(), Exception()):
+            with self.subTest(raised=raised):
+                mock_append_checksum.reset_mock()
+                mock_error.reset_mock()
+                subj = Backup()
+                directory = 'directory-%s' % uid()
+                name = 'name-%s' % uid()
+                checksum = 'checksum-%s' % uid()
+                sum_time = uid_time()
+
+                def append_checksum(_directory, _name, _checksum, _sum_time):
+                    if raised is not None:
+                        raise raised
+
+                mock_append_checksum.side_effect = append_checksum
+
+                subj.safe_append_checksum(directory, name, checksum, sum_time)
+
+                mock_append_checksum.assert_called_once_with(directory, name, checksum, sum_time)
+                mock_error.assert_has_calls([] if raised is None
+                                            else [call(subj, 'append checksum error: %s', raised)])
 
     @patch.object(Backup, 'read_directory_md5_with_time', spec=Backup.read_directory_md5_with_time)
     def test_checksum_by_name(self, mock_read_directory_md5_with_time):
