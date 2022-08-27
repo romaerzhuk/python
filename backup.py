@@ -63,6 +63,7 @@ def md5sum(path: Optional[str],
            is_stop_watch: bool = True,
            multiplier: Callable[[], int] = None) -> Any:
     """ Вычисляет контрольную сумму файла в шестнадцатеричном виде """
+    # TODO mmap для чтения из файла?
 
     def md5_by_path():
         return with_open(path, 'rb', lambda f: md5sum(path, f, out=out, multiplier=multiplier))
@@ -335,7 +336,7 @@ class SvnBackup(BackupStrategy):
     Сохраняет в self.md5sums подсчитанные контрольные суммы """
 
     def __init__(self, backup):
-        self.md5sums = backup.new_checksum_by_path
+        self.md5sums = backup.new_checksum_by_path  # type: Dict[str, str]
 
     @staticmethod
     def found(directory):
@@ -354,7 +355,7 @@ class SvnBackup(BackupStrategy):
         mkdirs(dst)
         log.debug("backup(src=%s, dst=%s, prefix=%s)", src, dst, prefix)
         new_rev = self.svn_revision(src)
-        md5 = load_md5(dst + "/.md5")
+        md5 = load_md5(dst + "/.md5")  # TODO: использовать backup.checksum(path)
         step = min_rev = 100
         while new_rev >= step - 1 and step < 10000:
             step *= 10
@@ -382,7 +383,7 @@ class SvnBackup(BackupStrategy):
             return
         dump_name = "%s.%06d-%06d.svndmp.gz" % (prefix, old_rev, new_rev)
         path = dst + '/' + dump_name
-        checksum = md5.get(dump_name)
+        checksum = md5.get(dump_name)  # TODO: использовать backup.checksum(path)
         if checksum is not None and checksum == md5sum(path):
             self.md5sums[path] = checksum
             return
@@ -404,10 +405,10 @@ class GitBackup(BackupStrategy):
     """ Создаёт резервную копию репозитория Git """
 
     def __init__(self, backup):
-        self.last_modified = backup.last_modified
-        self.up_to_date = backup.up_to_date
-        self.generic_backup = backup.generic_backup
-        self.excludes = {}
+        self.last_modified = backup.last_modified  # type: Callable[[str], None]
+        self.up_to_date = backup.up_to_date  # type: Callable[[str, str], bool]
+        self.generic_backup = backup.generic_backup  # type: Callable[[str, str, str], None]
+        self.excludes = set()  # type: Set[str]
 
     @staticmethod
     def found(src):
@@ -604,7 +605,7 @@ class Backup:
             self.hostname = socket.gethostname()
         self.smtp_host = self.config.get('smtp_host')
         self.time_separator = TimeSeparator(num)
-        self.separators = [self.time_separator, SvnSeparator()] # способы разделить нужные копии от избыточных
+        self.separators = [self.time_separator, SvnSeparator()]  # способы разделить нужные копии от избыточных
         self.src_dirs = src_dirs.split(',')
         log.debug("src_dirs=%s", self.src_dirs)
         self.dest_dirs = dest_dirs.split(',') if dest_dirs is not None else []
@@ -752,7 +753,7 @@ class Backup:
         for dst in self.dest_dirs[1:]:
             self.remove(dst + key)
 
-    def last_modified(self, path):
+    def last_modified(self, path: str) -> None:
         """ Устанавливает self.last_modified_time последнее время модификации файла. """
         if not os.path.isfile(path):
             return
@@ -761,7 +762,7 @@ class Backup:
             log.debug('last modified %s %s', modified, path)
             self.last_modified_time = modified
 
-    def up_to_date(self, src, dst):
+    def up_to_date(self, src: str, dst: str) -> bool:
         """ Проверяет время создания последнего архива. Возвращает True, если backup не требуется """
         if dst is None:
             log.debug('dst=[%s] is up date.', dst)
@@ -911,28 +912,7 @@ class Backup:
 
     def checks(self) -> None:
         """ Выполняет медленную проверку контрольных сумм, чтоб не создавать нагрузку на систему. """
-        with_lock_file(self.dest_dirs[0] + '/.lock', lambda: self.slow_check_dir(self.write_and_get_checksums()))
-
-    def write_and_get_checksums(self) -> Dict[str, Dict[str, Tuple[str, float]]]:
-        """ Записывает контрольные суммы всех директорий. Возвращает контрольные суммы """
-        for path in self.dest_dirs:
-            self.write_dir_checksums_recursively(path)
-        return self.checksums_by_dir
-
-    def write_dir_checksums_recursively(self, directory: str) -> None:
-        """ Записывает контрольные суммы директорий """
-        for root, dirs, files in os.walk(directory):
-            self.write_dir_checksums(root, self.checksum_path(root), set(files))
-
-    def write_dir_checksums(self, directory: str, checksum_path: str, files: Set[str]) -> None:
-        """ Записывает контрольные суммы директории """
-        md5_with_time = self.read_dir_md5_with_time(directory, checksum_path, files)
-        if len(md5_with_time) == 0:
-            remove_file(checksum_path)
-        elif self.safe_write(checksum_path,
-                             lambda fd: self.write_md5_with_time_dict(fd, md5_with_time),
-                             lambda: 'update ' + checksum_path):
-            self.checksums_by_dir[directory] = md5_with_time
+        with_lock_file(self.dest_dirs[0] + '/.lock', lambda: self.slow_check_dirs())
 
     @classmethod
     def read_directory_md5_with_time(cls, directory: str) -> Dict[str, Tuple[str, float]]:
@@ -965,15 +945,66 @@ class Backup:
             if name not in dir_md5_with_time or sum_time > dir_md5_with_time[name][1]:
                 dir_md5_with_time[name] = (checksum, sum_time)
 
-    @classmethod
-    def slow_check_dir(cls, checksums_by_dir: Dict[str, Dict[str, Tuple[str, float]]]) -> None:
-        """ Медленно вычисляет контрольные суммы, чтоб не создавать нагрузку на систему """
-        for directory, name, checksum in cls.sorted_checksums_by_dir(checksums_by_dir):
+    def slow_check_dirs(self) -> None:
+        """ Медленно вычисляет контрольные суммы директорий, чтоб не создавать нагрузку на систему """
+        for directory in self.sorted_dirs():
+            self.slow_check_dir(directory)
+
+    def sorted_dirs(self) -> List[str]:
+        """ Возвращает каталоги отсортированные по времени модификации дочерних файлов """
+        time_by_dir = {}
+        for path in self.dest_dirs:
+            time_by_dir.update(self.time_by_directory(path))
+        return sorted([d for d in time_by_dir],
+                      key=lambda d: time_by_dir[d])
+
+    def slow_check_dir(self, directory: str) -> None:
+        """ Медленно вычисляет контрольные суммы директории, чтоб не создавать нагрузку на систему """
+        for name, checksum in self.sorted_name_with_checksum(self.rewrite_dir_checksums(directory)):
             sum_time = time.time()
-            s = md5sum(directory + '/' + name, multiplier=cls.with_sleep_multiplier)
-            if s != checksum:
-                s = 'corrupted'
-            cls.append_checksum(directory, name, s, sum_time)
+            real = md5sum(directory + '/' + name, multiplier=self.with_sleep_multiplier)
+            if real != checksum:
+                checksum = 'corrupted'
+            self.safe_append_checksum(directory, name, checksum, sum_time)
+
+    @classmethod
+    def time_by_directory(cls, directory: str) -> Dict[str, float]:
+        """ Возвращает время модификации дочерних файлов директорий """
+        result = {}
+        for root, dirs, files in os.walk(directory):
+            if len(files) > 0:
+                result[root] = cls.max_time(root, files)
+        return result
+
+    @staticmethod
+    def sorted_name_with_checksum(checksum_with_time_by_name: Dict[str, Tuple[str, float]]) \
+            -> List[Tuple[str, str]]:
+        return sorted(map(lambda name: (name, checksum_with_time_by_name[name][0]), checksum_with_time_by_name),
+                      key=lambda k: checksum_with_time_by_name[k[0]][1])
+
+    def rewrite_dir_checksums(self, directory: str) -> Dict[str, Tuple[str, float]]:
+        """ Перезаписывает контрольные суммы файлов директории в файл '.checksum' """
+        checksum_with_time_by_name = self.read_directory_md5_with_time(directory)
+        checksum_path = self.checksum_path(directory)
+        if len(checksum_with_time_by_name) == 0:
+            remove_file(checksum_path)
+        else:
+            self.safe_write(checksum_path,
+                            lambda fd: self.write_md5_with_time_dict(fd, checksum_with_time_by_name),
+                            lambda: 'update ' + checksum_path)
+        return checksum_with_time_by_name
+
+    @staticmethod
+    def max_time(directory: str, files: List[str]) -> float:
+        """ Возвращает максимальное время модификации дочерних файлов директорий """
+        return max(map(lambda name: os.path.getmtime(directory + '/' + name), files))
+
+    def safe_append_checksum(self, directory: str, name: str, checksum: str, sum_time: float) -> None:
+        """ Записывает контрольную сумму файла с подавлением исключения """
+        try:
+            self.append_checksum(directory, name, checksum, sum_time)
+        except BaseException as e:
+            self.error('append checksum error: %s', e)
 
     @classmethod
     def append_checksum(cls, directory: str, name: str, checksum: str, sum_time: float) -> None:
@@ -1000,16 +1031,8 @@ class Backup:
 
     @staticmethod
     def sorted_md5_with_time_by_time(md5_with_time: Dict[str, Tuple[str, float]]) -> List[str]:
+        """ Сортирует контрольные суммы по времени """
         return sorted(md5_with_time, key=lambda k: md5_with_time[k][1])
-
-    @staticmethod
-    def sorted_checksums_by_dir(checksums_by_dir: Dict[str, Dict[str, Tuple[str, float]]]) \
-            -> List[Tuple[str, str, str]]:
-        result = []
-        for directory, checksum_by_name in checksums_by_dir.items():
-            for name, t in checksum_by_name.items():
-                result.append((directory, name, t[0]))
-        return sorted(result, key=lambda k: checksums_by_dir[k[0]][k[1]][1])
 
     def recovery_entry(self, name: str) -> Tuple[RecoveryEntry, int]:
         """ Возвращает созданный RecoveryEntry и индекс классификатора имён файлов """
@@ -1110,6 +1133,7 @@ class Backup:
                     return checksum.hexdigest().lower()
                 checksum.update(buf)
                 out.write(buf)
+
         actual = with_open(src, 'rb', copy)
         if actual != expected:
             raise IOError('Corrupted [%s]. Checksum is %s but expected %s' % (src, actual, expected))
@@ -1143,13 +1167,6 @@ class Backup:
         except BaseException as e:
             self.error('md5sum error: %s', e)
             return None
-
-    def safe_append_checksum(self, directory: str, name: str, checksum: str, sum_time: float) -> None:
-        """ Записывает контрольную сумму файла с подавлением исключения """
-        try:
-            self.append_checksum(directory, name, checksum, sum_time)
-        except BaseException as e:
-            self.error('append checksum error: %s', e)
 
     def checksum_by_name(self, directory: str) -> Dict[str, Tuple[Optional[str], Optional[float]]]:
         """ Возвращает контрольные суммы файлов в директории из *.checksum и файлов *.md5. Кэширует результат """
