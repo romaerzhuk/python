@@ -24,13 +24,17 @@ def system(command, reader=None, stdin=None, cwd=None):
 
 def tunfilter(stdout):
     pattern = re.compile(r'^(\S+)\s+(\S+)\s+(\S+)\s+.*\stunsnx$')
-    prefix = re.compile(r'^(10.187.)|(10.189.)|(217.)')
+    includes = re.compile(r'^(10.187.)|(10.189.)|(217.)')
+    excludes = re.compile(r'^(217.0.0.0)|(217.8.0.0)|(217.32.0.0)|(217.64.0.0)|(217.128.0.0)')
     list = []
     for line in stdout:
         line = line.rstrip().decode('utf-8')
         m = pattern.match(line)
-        log.debug('%s -> %s', line, m)
-        if m is not None and prefix.match(m.group(1)) is None:
+        match = m is not None
+        exclude = match and excludes.match(m.group(1)) is not None
+        include = match and includes.match(m.group(1)) is not None
+        log.debug('%s -> match=%s, exclude=%s, include=%s', line, match, exclude, include)
+        if match and (exclude or not include):
             list.append((m.group(1), m.group(3)))
     return list
 
@@ -40,7 +44,6 @@ def main():
     log.debug('%s', list)
     for s in list:
         system(['route', 'del', '-net', s[0], 'netmask', s[1]])
-    system(['route', 'add', '-net', '10.0.0.0', 'netmask', '255.0.0.0', 'dev', 'tunsnx'])
 
 if __name__ == '__main__':
     main()
