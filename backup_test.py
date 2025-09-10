@@ -9,13 +9,13 @@ from unittest.mock import MagicMock
 from unittest.mock import Mock
 from unittest.mock import call
 from unittest.mock import patch
+from typing import Tuple
 
 import backup
 from backup import Backup
 from backup import SvnBackup
 from backup import SvnSeparator
 from backup import TimeSeparator
-
 
 class BackupUnitTest(TestCase):
 
@@ -133,22 +133,28 @@ class BackupUnitTest(TestCase):
                 mock_path.reset_mock()
                 mock_path.isfile.return_value = is_file
 
-                def uid_spaces():
+                def uid_spaces() -> str:
                     return ' ' * (1 + uid(3)) + '\t' * (uid(3))
 
-                expected = {'name-%s' % uid(): (('sum-%s' % uid()).rjust(32, '0'), int(uid_time()))
+                def uid_sum(width: int) -> str:
+                    return ('sum-%s' % uid()).rjust(32 + width, '0')
+
+                expected = {'name-%s' % uid(): (uid_sum(0), int(uid_time()))
                             for _ in uid_range()}
+                keys = list(expected.keys())
                 data = [expected[key][0] + uid_spaces() + time_to_iso(expected[key][1]) + uid_spaces() + key
                         for key in expected]
-                data.append('%s no matched value name-%s' % (('sum-%s' % uid()).rjust(32, '0'), uid()))
-                data.append('%s 2021-99-99T99:99:99.123456+00:00 name-%s'
-                            % (('sum-%s' % uid()).rjust(32, '0'), uid()))  # illegal time
+                data.append('%s no matched value name-%s' % (uid_sum(0), uid()))
+                data.append('%s 2021-99-99T99:99:99.123456+00:00 name-%s' % (uid_sum(0), uid()))  # illegal time
+                data.append(uid_sum(1) + uid_spaces() + time_to_iso(uid_time() - 1) + uid_spaces() + keys[0]) # некорректная сумма игнорируется
+                data.append(uid_sum(1) + uid_spaces() + time_to_iso(uid_time() + 1) + uid_spaces() + keys[0]) # некорректная сумма игнорируется
+                data.append(uid_sum(-1) + uid_spaces() + time_to_iso(uid_time() - 1) + uid_spaces() + keys[1]) # некорректная сумма игнорируется
+                data.append(uid_sum(-1) + uid_spaces() + time_to_iso(uid_time() + 1) + uid_spaces() + keys[1]) # некорректная сумма игнорируется
                 for i in range(30, 35):
                     if i != 32:
                         sum_time = int(uid_time())
                         key = 'name-%s' % uid()
                         data.append(('sum-%s' % uid()).rjust(i, '0') + ' ' + time_to_iso(sum_time) + ' '+ key)
-                        expected[key] = (None, sum_time)
                 path = 'path-%s' % uid()
 
                 def with_open(name, mode, read):

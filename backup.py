@@ -130,8 +130,9 @@ def load_md5_with_times(path: str) -> Dict[str, Tuple[str, float]]:
             if m is not None:
                 try:
                     t = time_from_string(m.group(2))
-                    checksum = m.group(1).lower()
-                    result[m.group(3)] = (checksum if len(checksum) == 32 else None, t)
+                    checksum = str(m.group(1).lower())
+                    if len(checksum) == 32:
+                      result[m.group(3)] = (checksum, t)
                 except ValueError:
                     pass
         return result
