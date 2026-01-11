@@ -77,7 +77,7 @@ def md5sum(path: Optional[str],
     while True:
         n = multiplier() if multiplier is not None else 1024
         buf = input_stream.read(1024 * n)
-        if len(buf) == 0:
+        if not buf or len(buf) == 0:
             return checksum.hexdigest().lower()
         checksum.update(buf)
         if out is not None:
@@ -1166,7 +1166,7 @@ class Backup:
         try:
             return md5sum(path, is_stop_watch=False)
         except BaseException as e:
-            self.error('md5sum error: %s', e)
+            self.error('md5sum error: %s\n%s', e, traceback.format_exc())
             return None
 
     def checksum_by_name(self, directory: str) -> Dict[str, Tuple[Optional[str], Optional[float]]]:
